@@ -85,16 +85,39 @@ export async function listComplaints(filters = {}, pagination = { limit: 20, off
       i.id AS institution_id,
       i.aicte_permanent_id AS institution_permanent_id,
       i.institution_name,
-      i.state AS institution_state
+      i.state AS institution_state,
+      COALESCE(o.has_overlap, false) AS has_overlap,
+      COALESCE(o.matched_case_ids, ARRAY[]::TEXT[]) AS matched_case_ids
     FROM complaints c
     JOIN institutions i ON c.institution_id = i.id
+    LEFT JOIN (
+      SELECT
+        complaint_id,
+        true AS has_overlap,
+        ARRAY_AGG(matched_id ORDER BY matched_id) AS matched_case_ids
+      FROM (
+        SELECT complaint_id_a AS complaint_id, complaint_id_b AS matched_id
+        FROM complaint_links
+        WHERE review_status IN ('Suggested', 'Confirmed')
+        UNION ALL
+        SELECT complaint_id_b AS complaint_id, complaint_id_a AS matched_id
+        FROM complaint_links
+        WHERE review_status IN ('Suggested', 'Confirmed')
+      ) links
+      GROUP BY complaint_id
+    ) o ON c.complaint_id = o.complaint_id
     ${whereClause}
     ORDER BY c.created_at DESC
     LIMIT $${queryParams.length - 1} OFFSET $${queryParams.length};
   `;
 
   const listResult = await query(listSql, queryParams);
-  return { complaints: listResult.rows, total };
+  const complaints = listResult.rows.map((row) => ({
+    ...row,
+    has_overlap: Boolean(row.has_overlap),
+    matched_case_ids: Array.isArray(row.matched_case_ids) ? row.matched_case_ids : []
+  }));
+  return { complaints, total };
 }
 
 /**
@@ -126,10 +149,28 @@ export async function getComplaintById(complaintId, user = null) {
       u.full_name AS assigned_user_name,
       u.email AS assigned_user_email,
       u.role AS assigned_user_role,
-      u.bureau AS assigned_user_bureau
+      u.bureau AS assigned_user_bureau,
+      COALESCE(o.has_overlap, false) AS has_overlap,
+      COALESCE(o.matched_case_ids, ARRAY[]::TEXT[]) AS matched_case_ids
     FROM complaints c
     JOIN institutions i ON c.institution_id = i.id
     LEFT JOIN users u ON c.assigned_to = u.id
+    LEFT JOIN (
+      SELECT
+        complaint_id,
+        true AS has_overlap,
+        ARRAY_AGG(matched_id ORDER BY matched_id) AS matched_case_ids
+      FROM (
+        SELECT complaint_id_a AS complaint_id, complaint_id_b AS matched_id
+        FROM complaint_links
+        WHERE review_status IN ('Suggested', 'Confirmed')
+        UNION ALL
+        SELECT complaint_id_b AS complaint_id, complaint_id_a AS matched_id
+        FROM complaint_links
+        WHERE review_status IN ('Suggested', 'Confirmed')
+      ) links
+      GROUP BY complaint_id
+    ) o ON c.complaint_id = o.complaint_id
     WHERE c.complaint_id = $1;
   `;
 
@@ -208,6 +249,8 @@ export async function getComplaintById(complaintId, user = null) {
     created_at: row.created_at,
     updated_at: row.updated_at,
     created_by: row.created_by,
+    has_overlap: Boolean(row.has_overlap),
+    matched_case_ids: Array.isArray(row.matched_case_ids) ? row.matched_case_ids : [],
     institution: {
       id: row.institution_id,
       aicte_permanent_id: row.institution_permanent_id,
