@@ -96,6 +96,7 @@ export async function listOverlaps(filters = {}, pagination = { limit: 20, offse
     created_at: row.created_at,
     requires_official_review: row.review_status === "Suggested",
     caseA: {
+      id: row.complaint_id_a,
       complaint_id: row.complaint_id_a,
       title: row.case_a_title,
       category: row.case_a_category,
@@ -103,6 +104,8 @@ export async function listOverlaps(filters = {}, pagination = { limit: 20, offse
       status: row.case_a_status,
       priority: row.case_a_priority,
       description: row.case_a_description,
+      institution_id: row.case_a_institution_perm_id || row.case_a_institution_id,
+      institution_name: row.case_a_institution_name,
       institution: {
         id: row.case_a_institution_id,
         aicte_permanent_id: row.case_a_institution_perm_id,
@@ -110,6 +113,7 @@ export async function listOverlaps(filters = {}, pagination = { limit: 20, offse
       }
     },
     caseB: {
+      id: row.complaint_id_b,
       complaint_id: row.complaint_id_b,
       title: row.case_b_title,
       category: row.case_b_category,
@@ -117,6 +121,8 @@ export async function listOverlaps(filters = {}, pagination = { limit: 20, offse
       status: row.case_b_status,
       priority: row.case_b_priority,
       description: row.case_b_description,
+      institution_id: row.case_b_institution_perm_id || row.case_b_institution_id,
+      institution_name: row.case_b_institution_name,
       institution: {
         id: row.case_b_institution_id,
         aicte_permanent_id: row.case_b_institution_perm_id,
@@ -214,6 +220,7 @@ export async function getRelatedByComplaintId(complaintId, user = null) {
       review_notes: row.review_notes,
       requires_official_review: row.review_status === "Suggested",
       matched_complaint: {
+        id: row.related_complaint_id,
         complaint_id: row.related_complaint_id,
         title: row.related_title,
         category: row.related_category,
@@ -221,6 +228,8 @@ export async function getRelatedByComplaintId(complaintId, user = null) {
         status: row.related_status,
         priority: row.related_priority,
         description: row.related_description,
+        institution_id: row.related_institution_perm_id || row.related_institution_id,
+        institution_name: row.related_institution_name,
         institution: {
           id: row.related_institution_id,
           aicte_permanent_id: row.related_institution_perm_id,

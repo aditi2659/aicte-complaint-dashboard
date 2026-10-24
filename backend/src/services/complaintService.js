@@ -70,6 +70,7 @@ export async function listComplaints(filters = {}, pagination = { limit: 20, off
   const listSql = `
     SELECT
       c.complaint_id,
+      c.complaint_id AS id,
       c.title,
       c.category,
       c.description,
@@ -83,6 +84,7 @@ export async function listComplaints(filters = {}, pagination = { limit: 20, off
       c.updated_at,
       c.created_by,
       i.id AS institution_id,
+      i.aicte_permanent_id,
       i.aicte_permanent_id AS institution_permanent_id,
       i.institution_name,
       i.state AS institution_state,
@@ -236,6 +238,7 @@ export async function getComplaintById(complaintId, user = null) {
   const actionsResult = await query(actionsSql, [complaintId]);
 
   return {
+    id: row.complaint_id,
     complaint_id: row.complaint_id,
     title: row.title,
     category: row.category,

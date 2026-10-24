@@ -12,7 +12,10 @@
     "test:phase3": "node scripts/test-phase3.js",
     "test:phase4": "node scripts/test-phase4.js",
     "test:phase5": "node scripts/test-phase5.js",
-    "test": "node scripts/test-phase3.js && node scripts/test-phase4.js && node scripts/test-phase5.js"
+    "test:analytics:adapter": "node scripts/test-analytics-adapter.js",
+    "test:analytics:routes": "node scripts/test-analytics-routes.js",
+    "test:overlap": "node scripts/test-complaint-overlap.js",
+    "test": "node scripts/test-phase3.js && node scripts/test-phase4.js && node scripts/test-phase5.js && node scripts/test-analytics-adapter.js && node scripts/test-analytics-routes.js && node scripts/test-complaint-overlap.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
