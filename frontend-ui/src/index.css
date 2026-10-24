@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+@theme {
+  --color-forest-bg: #101713;
+  --color-forest-card: #1A241D;
+  --color-forest-elevated: #222F25;
+  --color-forest-hover: #27362B;
+  --color-forest-border: #35473A;
+  --color-forest-border-subtle: #243328;
+
+  --color-lime-primary: #C4F279;
+  --color-lime-hover: #B2E560;
+  --color-lime-dim: rgba(196, 242, 121, 0.12);
+  --color-lime-glow: rgba(196, 242, 121, 0.22);
+
+  --color-pink-accent: #FF8BCB;
+  --color-pink-hover: #F278BA;
+  --color-pink-dim: rgba(255, 139, 203, 0.12);
+  --color-pink-glow: rgba(255, 139, 203, 0.22);
+
+  /* High contrast readable text tokens */
+  --color-text-main: #E6EFE5;
+  --color-text-secondary: #B8CBB9;
+  --color-text-muted: #8EA490;
+}
+
+@layer base {
+  :root {
+    --bg-primary: #101713;
+    --bg-card: #1A241D;
+    --bg-elevated: #222F25;
+    --border-color: #35473A;
+    --accent-lime: #C4F279;
+    --accent-pink: #FF8BCB;
+    --text-primary: #E6EFE5;
+    --text-secondary: #B8CBB9;
+  }
+
+  body {
+    background-color: #101713;
+    color: #E6EFE5;
+    font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  code, kbd, samp, pre {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+}
+
+/* Subtle restrained pixel grid background */
+.bg-pixel-grid {
+  background-size: 24px 24px;
+  background-image: 
+    linear-gradient(to right, rgba(196, 242, 121, 0.025) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(196, 242, 121, 0.025) 1px, transparent 1px);
+}
+
+/* Pixel dash section divider */
+.pixel-divider {
+  background-image: linear-gradient(to right, #35473A 50%, transparent 50%);
+  background-size: 6px 1px;
+  background-repeat: repeat-x;
+  height: 1px;
+  width: 100%;
+}
+
+/* Custom scrollbar in forest theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #101713;
+}
+::-webkit-scrollbar-thumb {
+  background: #2B3A2F;
+  border-radius: 0px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3B4F40;
+}
