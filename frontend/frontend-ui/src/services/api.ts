@@ -1,4 +1,4 @@
-﻿import type {
+import type {
   Complaint,
   Institution,
   OverlapMatch,
@@ -6,7 +6,11 @@
   ComplaintStatus,
   BureauCode,
   OverlapReviewStatus,
-  SystemUser
+  SystemUser,
+  AnalyticsRiskCase,
+  AnalyticsPatterns,
+  AnalyticsPriorityCase,
+  AnalyticsAlert
 } from '../types/index.ts';
 import {
   mapBackendComplaintToUi,
@@ -328,6 +332,57 @@ export const ComplaintApiService = {
     return {
       success: true,
       data: res.data,
+      timestamp: new Date().toISOString(),
+    };
+  },
+
+  /**
+   * Fetch live risk assessment cases from backend /api/v1/analytics/risk-cases
+   */
+  async getRiskCases(): Promise<ApiResponse<AnalyticsRiskCase[]>> {
+    const res = await apiRequest<{ success: boolean; data: AnalyticsRiskCase[] }>('/api/v1/analytics/risk-cases');
+    return {
+      success: true,
+      data: res.data || [],
+      timestamp: new Date().toISOString(),
+    };
+  },
+
+  /**
+   * Fetch live pattern detection from backend /api/v1/analytics/patterns
+   */
+  async getPatterns(): Promise<ApiResponse<AnalyticsPatterns>> {
+    const res = await apiRequest<{ success: boolean; data: AnalyticsPatterns }>('/api/v1/analytics/patterns');
+    return {
+      success: true,
+      data: res.data || { repeatedCategories: [], risingCategories: [], busyRegions: [] },
+      timestamp: new Date().toISOString(),
+    };
+  },
+
+  /**
+   * Fetch prioritized attention case list from backend /api/v1/analytics/priority-list
+   * Supports optional limit parameter (defaults to 10)
+   */
+  async getPriorityList(limit: number = 10): Promise<ApiResponse<AnalyticsPriorityCase[]>> {
+    const res = await apiRequest<{ success: boolean; data: AnalyticsPriorityCase[] }>(
+      `/api/v1/analytics/priority-list?limit=${encodeURIComponent(limit)}`
+    );
+    return {
+      success: true,
+      data: res.data || [],
+      timestamp: new Date().toISOString(),
+    };
+  },
+
+  /**
+   * Fetch active early-warning alerts from backend /api/v1/analytics/alerts
+   */
+  async getAlerts(): Promise<ApiResponse<AnalyticsAlert[]>> {
+    const res = await apiRequest<{ success: boolean; data: AnalyticsAlert[] }>('/api/v1/analytics/alerts');
+    return {
+      success: true,
+      data: res.data || [],
       timestamp: new Date().toISOString(),
     };
   },

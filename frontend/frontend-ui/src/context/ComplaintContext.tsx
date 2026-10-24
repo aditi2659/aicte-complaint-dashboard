@@ -1,4 +1,4 @@
-﻿import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import {
   Complaint,
   Institution,
@@ -8,7 +8,11 @@ import {
   BureauCode,
   TimelineAction,
   OverlapReviewStatus,
-  SystemUser
+  SystemUser,
+  AnalyticsRiskCase,
+  AnalyticsPriorityCase,
+  AnalyticsPatterns,
+  AnalyticsAlert
 } from '../types';
 import {
   INITIAL_COMPLAINTS,
@@ -89,6 +93,14 @@ interface ComplaintContextType {
   addTimelineAction: (id: string, actionType: TimelineAction['actionType'], title: string, remarks: string, docRef?: string) => void;
   reviewOverlap: (id: string, status: OverlapReviewStatus, reviewNotes: string, relationshipType?: OverlapMatch['relationshipType']) => Promise<void>;
   resetToInitialData: () => void;
+  analyticsAlerts: AnalyticsAlert[];
+  priorityCases: AnalyticsPriorityCase[];
+  riskCases: AnalyticsRiskCase[];
+  patterns: AnalyticsPatterns | null;
+  analyticsLoading: boolean;
+  analyticsError: string | null;
+  reloadAnalytics: (limit?: number) => Promise<void>;
+  fetchPriorityList: (limit?: number) => Promise<AnalyticsPriorityCase[]>;
 }
 
 const ComplaintContext = createContext<ComplaintContextType | undefined>(undefined);
@@ -108,6 +120,51 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [apiLoading, setApiLoading] = useState<boolean>(true);
   const [apiError, setApiError] = useState<string | null>(null);
 
+  // Analytics state loaded from /api/v1/analytics/*
+  const [analyticsAlerts, setAnalyticsAlerts] = useState<AnalyticsAlert[]>([]);
+  const [priorityCases, setPriorityCases] = useState<AnalyticsPriorityCase[]>([]);
+  const [riskCases, setRiskCases] = useState<AnalyticsRiskCase[]>([]);
+  const [patterns, setPatterns] = useState<AnalyticsPatterns | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState<boolean>(false);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+
+  const reloadAnalytics = useCallback(async (limit: number = 10) => {
+    setAnalyticsLoading(true);
+    setAnalyticsError(null);
+    try {
+      const [alertsRes, priorityRes, riskRes, patternsRes] = await Promise.all([
+        ComplaintApiService.getAlerts(),
+        ComplaintApiService.getPriorityList(limit),
+        ComplaintApiService.getRiskCases(),
+        ComplaintApiService.getPatterns(),
+      ]);
+
+      setAnalyticsAlerts(alertsRes.data || []);
+      setPriorityCases(priorityRes.data || []);
+      setRiskCases(riskRes.data || []);
+      setPatterns(patternsRes.data || { repeatedCategories: [], risingCategories: [], busyRegions: [] });
+      setAnalyticsError(null);
+    } catch (err: any) {
+      console.warn('[ComplaintContext] Analytics load failed:', err.message);
+      // Explicit error state: do not silently substitute mock data
+      setAnalyticsError(err.message || 'Failed to fetch analytics from backend.');
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  }, []);
+
+  const fetchPriorityList = useCallback(async (limit: number = 10): Promise<AnalyticsPriorityCase[]> => {
+    try {
+      const res = await ComplaintApiService.getPriorityList(limit);
+      setPriorityCases(res.data || []);
+      return res.data || [];
+    } catch (err: any) {
+      console.warn('[ComplaintContext] Priority list fetch failed:', err.message);
+      setAnalyticsError(err.message || 'Failed to fetch priority cases.');
+      throw err;
+    }
+  }, []);
+
   // Method to fetch live backend data from Express API
   const loadDataFromApi = useCallback(async () => {
     setApiLoading(true);
@@ -125,6 +182,8 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
       setDataSource('api');
       setApiError(null);
+      // Also fetch fresh backend analytics
+      reloadAnalytics();
     } catch (err: any) {
       console.warn('[ComplaintContext] Backend API request failed:', err.message);
       setDataSource('fallback');
@@ -133,7 +192,7 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     } finally {
       setApiLoading(false);
     }
-  }, [complaints]);
+  }, [complaints, reloadAnalytics]);
 
   // Initial bootstrap: attempt authentication and live backend connection
   useEffect(() => {
@@ -249,6 +308,7 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
       setDataSource('api');
       setApiError(null);
+      await reloadAnalytics();
     } catch (err: any) {
       setApiError(err.message || 'Login failed.');
       throw err;
@@ -260,6 +320,11 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const logout = () => {
     authService.clearSession();
     setDataSource('fallback');
+    setAnalyticsAlerts([]);
+    setPriorityCases([]);
+    setRiskCases([]);
+    setPatterns(null);
+    setAnalyticsError(null);
     setApiError('Logged out. Operating in offline development fallback.');
   };
 
@@ -712,6 +777,14 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         addTimelineAction,
         reviewOverlap,
         resetToInitialData,
+        analyticsAlerts,
+        priorityCases,
+        riskCases,
+        patterns,
+        analyticsLoading,
+        analyticsError,
+        reloadAnalytics,
+        fetchPriorityList,
       }}
     >
       {children}

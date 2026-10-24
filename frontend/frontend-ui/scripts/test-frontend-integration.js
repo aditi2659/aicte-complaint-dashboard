@@ -1,4 +1,4 @@
-﻿/**
+/**
  * AICTE Dashboard Frontend Integration Verification Suite
  * Tests adapter data mapping, authentication, token handling, error states, and review API integration.
  */
@@ -349,7 +349,125 @@ async function runTests() {
     assert.strictEqual(res.body.error.code, "OVERLAP_NOT_FOUND");
   });
 
-  // 7. Summary
+  // 7. Predictive Analytics API Endpoints & Bureau Authorization
+  console.log("\n--- 7. Predictive Analytics API Endpoints & Authorization ---");
+
+  await itAsync("Admin receives risk-scored cases from /api/v1/analytics/risk-cases", async () => {
+    const res = await request("/api/v1/analytics/risk-cases", {
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.success, true);
+    assert(Array.isArray(res.body.data) && res.body.data.length > 0);
+
+    const firstCase = res.body.data[0];
+    assert(firstCase.complaint_id, "Case has complaint_id");
+    assert(typeof firstCase.risk === "object", "Case contains risk assessment object");
+    assert(typeof firstCase.risk.score === "number", "Risk assessment has numeric score");
+    assert(typeof firstCase.risk.level === "string", "Risk assessment has level string");
+    assert(Array.isArray(firstCase.risk.reasons), "Risk assessment has reasons array");
+    assert(firstCase.risk.level !== "Closed", "Closed cases are excluded from risk list");
+  });
+
+  await itAsync("Admin receives pattern intelligence from /api/v1/analytics/patterns", async () => {
+    const res = await request("/api/v1/analytics/patterns", {
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.success, true);
+    assert(typeof res.body.data === "object");
+    assert(Array.isArray(res.body.data.repeatedCategories), "repeatedCategories is an array");
+    assert(Array.isArray(res.body.data.risingCategories), "risingCategories is an array");
+    assert(Array.isArray(res.body.data.busyRegions), "busyRegions is an array");
+  });
+
+  await itAsync("Admin receives priority cases from /api/v1/analytics/priority-list respecting limit parameter", async () => {
+    const resLimit1 = await request("/api/v1/analytics/priority-list?limit=1", {
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+
+    assert.strictEqual(resLimit1.status, 200);
+    assert.strictEqual(resLimit1.body.success, true);
+    assert.strictEqual(resLimit1.body.data.length, 1, "Respects limit=1 query parameter");
+
+    const resLimit5 = await request("/api/v1/analytics/priority-list?limit=5", {
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+
+    assert.strictEqual(resLimit5.status, 200);
+    assert.strictEqual(resLimit5.body.success, true);
+    assert(resLimit5.body.data.length <= 5, "Returns up to limit=5 records");
+
+    const topCase = resLimit5.body.data[0];
+    assert(topCase.complaint_id, "Priority case has complaint_id");
+    assert(typeof topCase.score === "number", "Priority case has numeric score");
+    assert(typeof topCase.days_left === "number" || topCase.days_left === null, "Priority case has days_left");
+    assert(Array.isArray(topCase.reasons), "Priority case has reasons");
+  });
+
+  await itAsync("Admin receives active early-warning alerts from /api/v1/analytics/alerts", async () => {
+    const res = await request("/api/v1/analytics/alerts", {
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.success, true);
+    assert(Array.isArray(res.body.data) && res.body.data.length > 0);
+
+    const alert = res.body.data[0];
+    assert(alert.complaint_id, "Alert contains complaint_id");
+    assert(alert.type, "Alert contains type");
+    assert(alert.severity, "Alert contains severity");
+    assert(alert.message, "Alert contains human-readable message");
+    assert(typeof alert.seen === "boolean", "Alert contains seen flag");
+  });
+
+  await itAsync("SDC Officer receives bureau-scoped data on /api/v1/analytics/priority-list", async () => {
+    const res = await request("/api/v1/analytics/priority-list?limit=10", {
+      headers: { Authorization: `Bearer ${sdcToken}` }
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.success, true);
+    assert(res.body.data.length > 0);
+    assert(
+      res.body.data.every((c) => c.bureau === "Student Development Cell"),
+      "All priority cases are strictly scoped to Student Development Cell"
+    );
+  });
+
+  await itAsync("SDC Officer receives bureau-scoped alerts on /api/v1/analytics/alerts", async () => {
+    const res = await request("/api/v1/analytics/alerts", {
+      headers: { Authorization: `Bearer ${sdcToken}` }
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.success, true);
+    assert(res.body.data.length > 0);
+    assert(
+      res.body.data.every((a) => a.bureau === "Student Development Cell"),
+      "All alerts are strictly scoped to Student Development Cell"
+    );
+  });
+
+  await itAsync("Unauthenticated analytics requests are rejected with 401 AUTH_TOKEN_MISSING", async () => {
+    const endpoints = [
+      "/api/v1/analytics/risk-cases",
+      "/api/v1/analytics/patterns",
+      "/api/v1/analytics/priority-list",
+      "/api/v1/analytics/alerts",
+    ];
+
+    for (const ep of endpoints) {
+      const res = await request(ep);
+      assert.strictEqual(res.status, 401, `${ep} returns 401 without token`);
+      assert.strictEqual(res.body.error.code, "AUTH_TOKEN_MISSING");
+    }
+  });
+
+  // 8. Summary
   console.log("\n========================================");
   console.log(`Frontend Integration: ${passed} passed, ${failed} failed`);
   console.log("========================================\n");
