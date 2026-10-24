@@ -1,4 +1,6 @@
-import { query } from "../config/db.js";
+import { query, getPool } from "../config/db.js";
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * List overlap suggestions with database-enforced bureau scoping.
@@ -305,4 +307,259 @@ export async function getLegacyRelatedFeed(user = null) {
     count: data.length,
     data
   };
+}
+
+/**
+ * Review an overlap suggestion, transitioning its status from 'Suggested'
+ * to 'Confirmed' or 'Dismissed', recording reviewer audit trail and action history.
+ *
+ * @param {number|string} linkId - The complaint_links ID
+ * @param {{ review_status: 'Confirmed'|'Dismissed', review_notes?: string }} reviewData
+ * @param {object} user - Authenticated user performing the review
+ */
+export async function reviewOverlap(linkId, { review_status, review_notes = null }, user = null) {
+  const numericId = parseInt(linkId, 10);
+  if (!numericId || Number.isNaN(numericId) || numericId <= 0) {
+    const error = new Error("Invalid overlap link ID.");
+    error.code = "INVALID_INPUT";
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (review_status !== "Confirmed" && review_status !== "Dismissed") {
+    const error = new Error("Review status must be either 'Confirmed' or 'Dismissed'.");
+    error.code = "INVALID_INPUT";
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!user) {
+    const error = new Error("Authentication required.");
+    error.code = "UNAUTHORIZED";
+    error.statusCode = 401;
+    throw error;
+  }
+
+  if (user.role === "AUDITOR") {
+    const error = new Error("Auditors have read-only access and cannot review overlaps.");
+    error.code = "AUDITOR_READ_ONLY";
+    error.statusCode = 403;
+    throw error;
+  }
+
+  // 1. Fetch current link details and participant complaints to verify existence and bureau scoping
+  const selectSql = `
+    SELECT
+      cl.id AS link_id,
+      cl.complaint_id_a,
+      cl.complaint_id_b,
+      cl.similarity_score,
+      cl.match_reasons,
+      cl.review_status,
+      cl.reviewed_at,
+      cl.review_notes,
+      cl.created_at,
+      ca.title AS case_a_title,
+      ca.category AS case_a_category,
+      ca.bureau AS case_a_bureau,
+      ca.originating_bureau AS case_a_originating_bureau,
+      ca.status AS case_a_status,
+      ca.priority AS case_a_priority,
+      ca.description AS case_a_description,
+      ia.id AS case_a_institution_id,
+      ia.aicte_permanent_id AS case_a_institution_perm_id,
+      ia.institution_name AS case_a_institution_name,
+      cb.title AS case_b_title,
+      cb.category AS case_b_category,
+      cb.bureau AS case_b_bureau,
+      cb.originating_bureau AS case_b_originating_bureau,
+      cb.status AS case_b_status,
+      cb.priority AS case_b_priority,
+      cb.description AS case_b_description,
+      ib.id AS case_b_institution_id,
+      ib.aicte_permanent_id AS case_b_institution_perm_id,
+      ib.institution_name AS case_b_institution_name
+    FROM complaint_links cl
+    JOIN complaints ca ON cl.complaint_id_a = ca.complaint_id
+    JOIN institutions ia ON ca.institution_id = ia.id
+    JOIN complaints cb ON cl.complaint_id_b = cb.complaint_id
+    JOIN institutions ib ON cb.institution_id = ib.id
+    WHERE cl.id = $1;
+  `;
+
+  const linkResult = await query(selectSql, [numericId]);
+  if (linkResult.rows.length === 0) {
+    const error = new Error(`Overlap link '${numericId}' was not found.`);
+    error.code = "OVERLAP_NOT_FOUND";
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const row = linkResult.rows[0];
+
+  // 2. Prevent invalid status transitions: only Suggested links can be reviewed
+  if (row.review_status !== "Suggested") {
+    const error = new Error(
+      `Overlap link '${numericId}' has already been reviewed with status '${row.review_status}'.`
+    );
+    error.code = "INVALID_STATUS_TRANSITION";
+    error.statusCode = 409;
+    throw error;
+  }
+
+  // 3. Enforce bureau-level access: bureau-scoped users must belong to one of the participant bureaus
+  const isBureauScoped = Boolean(
+    user.role === "BUREAU_HEAD" || user.role === "BUREAU_OFFICER" || user.role === "GRIEVANCE_OFFICER"
+  );
+
+  if (isBureauScoped) {
+    if (!user.bureau) {
+      const error = new Error(`User account with role '${user.role}' has no bureau assigned.`);
+      error.code = "FORBIDDEN_BUREAU_ACCESS";
+      error.statusCode = 403;
+      throw error;
+    }
+
+    const isParticipant =
+      row.case_a_bureau === user.bureau ||
+      row.case_a_originating_bureau === user.bureau ||
+      row.case_b_bureau === user.bureau ||
+      row.case_b_originating_bureau === user.bureau;
+
+    if (!isParticipant) {
+      const error = new Error(`Access forbidden: Overlap link '${numericId}' does not involve your bureau.`);
+      error.code = "FORBIDDEN_BUREAU_ACCESS";
+      error.statusCode = 403;
+      throw error;
+    }
+  }
+
+  // 4. Execute atomic update and audit action logging within a database transaction
+  const activePool = getPool();
+  if (!activePool) {
+    throw new Error("Database pool is not configured.");
+  }
+  const client = await activePool.connect();
+
+  try {
+    await client.query("BEGIN;");
+
+    const reviewerUuid = UUID_REGEX.test(user.id) ? user.id : null;
+    const cleanNotes = review_notes !== undefined && review_notes !== null ? String(review_notes).trim() : null;
+
+    const updateSql = `
+      UPDATE complaint_links
+      SET
+        review_status = $1,
+        reviewed_by = $2,
+        reviewed_at = NOW(),
+        review_notes = $3
+      WHERE id = $4
+      RETURNING *;
+    `;
+    const updateResult = await client.query(updateSql, [review_status, reviewerUuid, cleanNotes, numericId]);
+    const updated = updateResult.rows[0];
+
+    // 5. Record audit action in complaint_actions for both affected complaints
+    const actionType = review_status === "Confirmed" ? "OVERLAP_LINKED" : "OVERLAP_REVIEWED";
+    const actorName = user.full_name || user.email || "Official Reviewer";
+
+    const insertActionSql = `
+      INSERT INTO complaint_actions (
+        complaint_id,
+        action_type,
+        action,
+        notes,
+        actor_id,
+        actor_name,
+        details
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7);
+    `;
+
+    const detailsA = JSON.stringify({
+      link_id: numericId,
+      matched_complaint_id: row.complaint_id_b,
+      review_status,
+      similarity_score: Number(row.similarity_score)
+    });
+
+    const detailsB = JSON.stringify({
+      link_id: numericId,
+      matched_complaint_id: row.complaint_id_a,
+      review_status,
+      similarity_score: Number(row.similarity_score)
+    });
+
+    await client.query(insertActionSql, [
+      row.complaint_id_a,
+      actionType,
+      `Cross-bureau overlap ${review_status.toLowerCase()} with ${row.complaint_id_b}`,
+      cleanNotes,
+      reviewerUuid,
+      actorName,
+      detailsA
+    ]);
+
+    await client.query(insertActionSql, [
+      row.complaint_id_b,
+      actionType,
+      `Cross-bureau overlap ${review_status.toLowerCase()} with ${row.complaint_id_a}`,
+      cleanNotes,
+      reviewerUuid,
+      actorName,
+      detailsB
+    ]);
+
+    await client.query("COMMIT;");
+
+    return {
+      id: updated.id,
+      similarity_score: Number(updated.similarity_score),
+      match_reasons: Array.isArray(updated.match_reasons) ? updated.match_reasons : [],
+      review_status: updated.review_status,
+      reviewed_at: updated.reviewed_at,
+      review_notes: updated.review_notes,
+      created_at: updated.created_at,
+      requires_official_review: updated.review_status === "Suggested",
+      caseA: {
+        id: row.complaint_id_a,
+        complaint_id: row.complaint_id_a,
+        title: row.case_a_title,
+        category: row.case_a_category,
+        bureau: row.case_a_bureau,
+        status: row.case_a_status,
+        priority: row.case_a_priority,
+        description: row.case_a_description,
+        institution_id: row.case_a_institution_perm_id || row.case_a_institution_id,
+        institution_name: row.case_a_institution_name,
+        institution: {
+          id: row.case_a_institution_id,
+          aicte_permanent_id: row.case_a_institution_perm_id,
+          name: row.case_a_institution_name
+        }
+      },
+      caseB: {
+        id: row.complaint_id_b,
+        complaint_id: row.complaint_id_b,
+        title: row.case_b_title,
+        category: row.case_b_category,
+        bureau: row.case_b_bureau,
+        status: row.case_b_status,
+        priority: row.case_b_priority,
+        description: row.case_b_description,
+        institution_id: row.case_b_institution_perm_id || row.case_b_institution_id,
+        institution_name: row.case_b_institution_name,
+        institution: {
+          id: row.case_b_institution_id,
+          aicte_permanent_id: row.case_b_institution_perm_id,
+          name: row.case_b_institution_name
+        }
+      }
+    };
+  } catch (err) {
+    await client.query("ROLLBACK;");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
