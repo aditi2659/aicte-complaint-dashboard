@@ -20,6 +20,27 @@ export const BUREAU_CODE_MAP = {
   FDB: "Faculty Development Bureau"
 };
 
+export const VALID_DB_STATUSES = [
+  "Open",
+  "Assigned",
+  "In Progress",
+  "Under Review",
+  "Pending Institution Response",
+  "Resolved",
+  "Closed",
+  "Transferred"
+];
+
+export const TERMINAL_STATUSES = ["Resolved", "Closed"];
+
+export const UI_STATUS_MAP = {
+  RECEIVED: "Open",
+  PENDING: "Open",
+  UNDER_PROCESS: "Under Review",
+  TRANSFERRED: "Transferred",
+  DISPOSED: "Resolved"
+};
+
 /**
  * List complaints with filtering, search, bounded pagination, and database-level bureau scoping.
  */
@@ -636,4 +657,208 @@ export async function createComplaint(payload = {}, user) {
   });
 
   return createdComplaint;
+}
+
+/**
+ * Updates a complaint's regulatory status atomically and records an audit action in complaint_actions.
+ * Enforces bureau-level access, terminal-state constraints, and mandatory transition remarks.
+ *
+ * @param {string} rawComplaintId - Target complaint ID
+ * @param {Object} payload - Status update payload ({ status, remarks, notes })
+ * @param {Object} user - Authenticated user context
+ * @returns {Promise<Object>} Full updated complaint dossier
+ */
+export async function updateComplaintStatus(rawComplaintId, payload = {}, user) {
+  if (!user) {
+    const error = new Error("Authentication required to update complaint status");
+    error.code = "UNAUTHORIZED";
+    error.statusCode = 401;
+    throw error;
+  }
+
+  if (user.role === "AUDITOR") {
+    const error = new Error("Auditors have read-only access and cannot create or modify records");
+    error.code = "AUDITOR_READ_ONLY";
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const complaintId = rawComplaintId ? String(rawComplaintId).trim() : "";
+  if (!complaintId) {
+    const error = new Error("Complaint ID is required");
+    error.code = "INVALID_INPUT";
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Validate remarks
+  const rawRemarks = payload.remarks !== undefined ? payload.remarks : payload.notes;
+  const cleanRemarks = rawRemarks ? String(rawRemarks).trim() : "";
+  if (!cleanRemarks) {
+    const error = new Error("Mandatory remarks justifying this status transition are required");
+    error.code = "INVALID_INPUT";
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Validate and normalize requested status
+  const rawStatus = payload.status ? String(payload.status).trim() : "";
+  if (!rawStatus) {
+    const error = new Error("New complaint status is required");
+    error.code = "INVALID_INPUT";
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let targetStatus;
+  let targetEscalated;
+
+  const upperStatus = rawStatus.toUpperCase();
+  if (upperStatus === "ESCALATED") {
+    targetStatus = "Under Review";
+    targetEscalated = true;
+  } else if (UI_STATUS_MAP[upperStatus]) {
+    targetStatus = UI_STATUS_MAP[upperStatus];
+  } else {
+    // Check direct database status
+    const dbMatch = VALID_DB_STATUSES.find((s) => s.toLowerCase() === rawStatus.toLowerCase());
+    if (dbMatch) {
+      targetStatus = dbMatch;
+    } else {
+      const error = new Error(
+        `Status '${rawStatus}' is not recognized. Valid statuses are: ${VALID_DB_STATUSES.join(", ")}`
+      );
+      error.code = "INVALID_INPUT";
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  const activePool = getPool();
+  if (!activePool) {
+    throw new Error("Database pool is not configured.");
+  }
+  const client = await activePool.connect();
+
+  try {
+    await client.query("BEGIN;");
+
+    // 1. Fetch current complaint with row lock to serialize concurrent updates
+    const selectSql = `
+      SELECT complaint_id, bureau, originating_bureau, status, is_escalated
+      FROM complaints
+      WHERE complaint_id = $1
+      FOR UPDATE;
+    `;
+    const checkRes = await client.query(selectSql, [complaintId]);
+    if (checkRes.rows.length === 0) {
+      const error = new Error(`Complaint '${complaintId}' was not found`);
+      error.code = "COMPLAINT_NOT_FOUND";
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const currentCase = checkRes.rows[0];
+
+    // 2. Enforce Bureau-Level Authorization
+    if (user.role === "SUPER_ADMIN") {
+      // Super Admin may update any complaint
+    } else if (user.role === "BUREAU_HEAD" || user.role === "BUREAU_OFFICER" || user.role === "GRIEVANCE_OFFICER") {
+      if (!user.bureau) {
+        const error = new Error(`User account with role '${user.role}' has no bureau assigned.`);
+        error.code = "FORBIDDEN_BUREAU_ACCESS";
+        error.statusCode = 403;
+        throw error;
+      }
+      if (currentCase.bureau !== user.bureau) {
+        const error = new Error(
+          `Access forbidden: Complaint '${complaintId}' belongs to '${currentCase.bureau}', not '${user.bureau}'.`
+        );
+        error.code = "FORBIDDEN_BUREAU_ACCESS";
+        error.statusCode = 403;
+        throw error;
+      }
+    } else {
+      const error = new Error(`Role '${user.role}' is not authorized to update complaint status`);
+      error.code = "FORBIDDEN_ROLE";
+      error.statusCode = 403;
+      throw error;
+    }
+
+    // 3. Prevent redundant or invalid status transitions
+    const newIsEscalated = targetEscalated !== undefined ? targetEscalated : currentCase.is_escalated;
+    if (currentCase.status === targetStatus && currentCase.is_escalated === newIsEscalated) {
+      const error = new Error(
+        `Complaint '${complaintId}' is already in status '${targetStatus}'.`
+      );
+      error.code = "INVALID_STATUS_TRANSITION";
+      error.statusCode = 409;
+      throw error;
+    }
+
+    // 4. Terminal State Rules: Disposed cases (Resolved / Closed) are closed to operational transitions
+    if (TERMINAL_STATUSES.includes(currentCase.status)) {
+      const error = new Error(
+        `Cannot transition complaint '${complaintId}' from terminal status '${currentCase.status}'. Disposed cases are closed to operational status updates.`
+      );
+      error.code = "INVALID_STATUS_TRANSITION";
+      error.statusCode = 409;
+      throw error;
+    }
+
+    // 5. Update complaints table
+    const updateSql = `
+      UPDATE complaints
+      SET
+        status = $1,
+        is_escalated = $2,
+        updated_at = NOW()
+      WHERE complaint_id = $3
+      RETURNING *;
+    `;
+    await client.query(updateSql, [targetStatus, newIsEscalated, complaintId]);
+
+    // 6. Record STATUS_CHANGE audit action in complaint_actions
+    const actorId = UUID_REGEX.test(user.id) ? user.id : null;
+    const actorName = user.full_name || user.email || "System User";
+    const details = JSON.stringify({
+      previous_status: currentCase.status,
+      new_status: targetStatus,
+      previous_is_escalated: currentCase.is_escalated,
+      is_escalated: newIsEscalated,
+      bureau: currentCase.bureau
+    });
+
+    const insertActionSql = `
+      INSERT INTO complaint_actions (
+        complaint_id,
+        action_type,
+        action,
+        notes,
+        actor_id,
+        actor_name,
+        details
+      ) VALUES ($1, 'STATUS_CHANGE', $2, $3, $4, $5, $6)
+      RETURNING *;
+    `;
+
+    await client.query(insertActionSql, [
+      complaintId,
+      `Status changed from ${currentCase.status} to ${targetStatus}`,
+      cleanRemarks,
+      actorId,
+      actorName,
+      details
+    ]);
+
+    await client.query("COMMIT;");
+  } catch (err) {
+    await client.query("ROLLBACK;");
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  // Return refreshed complaint dossier
+  return getComplaintById(complaintId, user);
 }

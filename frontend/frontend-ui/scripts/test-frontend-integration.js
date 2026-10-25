@@ -530,11 +530,84 @@ async function runTests() {
     if (pool) {
       await pool.query("DELETE FROM complaint_actions WHERE complaint_id = $1;", [res.body.data.complaint_id]);
       await pool.query("DELETE FROM complaints WHERE complaint_id = $1;", [res.body.data.complaint_id]);
+    }
+  });
+
+  // 9. Complaint Status Updates API Integration
+  console.log("\n--- 9. Complaint Status Updates API Integration ---");
+
+  await itAsync("SDC Officer successfully updates CMP-1003 status to UNDER_PROCESS", async () => {
+    const res = await request("/api/v1/complaints/CMP-1003/status", {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${sdcToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        status: mapUiStatusToBackend("UNDER_PROCESS"),
+        remarks: "Verification by SDC inspection team in progress"
+      })
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.success, true);
+    assert.strictEqual(res.body.data.complaint_id, "CMP-1003");
+    assert.strictEqual(res.body.data.status, "Under Review");
+
+    const uiMapped = mapBackendComplaintToUi(res.body.data);
+    assert.strictEqual(uiMapped.status, "UNDER_PROCESS");
+  });
+
+  await itAsync("rejects status update with empty remarks (HTTP 400 INVALID_INPUT)", async () => {
+    const res = await request("/api/v1/complaints/CMP-1003/status", {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${sdcToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        status: "In Progress",
+        remarks: "   "
+      })
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.body.success, false);
+    assert.strictEqual(res.body.error.code, "INVALID_INPUT");
+  });
+
+  await itAsync("blocks cross-bureau status update by SDC Officer on GRC complaint (HTTP 403)", async () => {
+    const res = await request("/api/v1/complaints/CMP-1002/status", {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${sdcToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        status: "In Progress",
+        remarks: "Unauthorized attempt"
+      })
+    });
+
+    assert.strictEqual(res.status, 403);
+    assert.strictEqual(res.body.error.code, "FORBIDDEN_BUREAU_ACCESS");
+  });
+
+  await itAsync("restores CMP-1003 baseline status and cleans up test audit records", async () => {
+    const { getPool } = await import("../../../backend/src/config/db.js");
+    const pool = getPool();
+    if (pool) {
+      await pool.query(
+        "UPDATE complaints SET status = 'Open', is_escalated = FALSE, updated_at = NOW() WHERE complaint_id = 'CMP-1003';"
+      );
+      await pool.query(
+        "DELETE FROM complaint_actions WHERE complaint_id = 'CMP-1003' AND action_type = 'STATUS_CHANGE';"
+      );
       await pool.end();
     }
   });
 
-  // 9. Summary
+  // 10. Summary
   console.log("\n========================================");
   console.log(`Frontend Integration: ${passed} passed, ${failed} failed`);
   console.log("========================================\n");

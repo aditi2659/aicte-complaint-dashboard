@@ -85,3 +85,39 @@ export async function create(req, res, next) {
     return next(error);
   }
 }
+
+/**
+ * PATCH /api/v1/complaints/:id/status
+ */
+export async function updateStatus(req, res, next) {
+  try {
+    const id = req.params.id?.trim();
+    if (!id) {
+      return sendError(res, "INVALID_INPUT", "Complaint ID is required", 400);
+    }
+
+    const complaint = await complaintService.updateComplaintStatus(id, req.body, req.user);
+    return sendSuccess(res, complaint);
+  } catch (error) {
+    if (error.code === "COMPLAINT_NOT_FOUND") {
+      return sendError(res, error.code, error.message, 404);
+    }
+    if (error.code === "INVALID_STATUS_TRANSITION") {
+      return sendError(res, error.code, error.message, 409);
+    }
+    if (
+      error.code === "FORBIDDEN_BUREAU_ACCESS" ||
+      error.code === "FORBIDDEN_ROLE" ||
+      error.code === "AUDITOR_READ_ONLY"
+    ) {
+      return sendError(res, error.code, error.message, 403);
+    }
+    if (error.code === "UNAUTHORIZED") {
+      return sendError(res, error.code, error.message, 401);
+    }
+    if (error.code === "INVALID_INPUT") {
+      return sendError(res, error.code, error.message, 400);
+    }
+    return next(error);
+  }
+}

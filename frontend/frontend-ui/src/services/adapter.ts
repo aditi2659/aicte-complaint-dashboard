@@ -30,10 +30,10 @@ export const BUREAU_CODE_TO_NAME: Record<BureauCode, string> = {
 export function mapBackendStatusToUi(status?: string): ComplaintStatus {
   const s = (status || '').toLowerCase().trim();
   if (s === 'open') return 'PENDING';
-  if (s === 'assigned' || s === 'under review') return 'UNDER_PROCESS';
+  if (s === 'assigned' || s === 'under review' || s === 'in progress' || s === 'pending institution response') return 'UNDER_PROCESS';
   if (s === 'transferred') return 'TRANSFERRED';
   if (s === 'escalated') return 'ESCALATED';
-  if (s === 'resolved' || s === 'dismissed') return 'DISPOSED';
+  if (s === 'resolved' || s === 'closed' || s === 'dismissed') return 'DISPOSED';
   return 'PENDING';
 }
 

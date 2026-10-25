@@ -7,6 +7,7 @@ const router = Router();
 router.get("/", complaintController.list);
 router.post("/", complaintController.create);
 router.get("/:id", complaintController.getById);
+router.patch("/:id/status", complaintController.updateStatus);
 router.get("/:id/related", overlapController.getRelatedForComplaint);
 
 export default router;

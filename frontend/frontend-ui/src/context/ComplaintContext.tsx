@@ -87,7 +87,7 @@ interface ComplaintContextType {
   getInstitutionById: (id: string) => Institution | undefined;
   getStats: () => DashboardStats;
   addComplaint: (data: Partial<Complaint>) => Promise<Complaint>;
-  updateComplaintStatus: (id: string, newStatus: ComplaintStatus, remarks: string) => void;
+  updateComplaintStatus: (id: string, newStatus: ComplaintStatus, remarks: string) => Promise<Complaint>;
   transferBureau: (id: string, targetBureau: BureauCode, reason: string, remarks: string) => void;
   reassignOfficer: (id: string, officerId: string, remarks: string) => void;
   addTimelineAction: (id: string, actionType: TimelineAction['actionType'], title: string, remarks: string, docRef?: string) => void;
@@ -419,32 +419,25 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   };
 
-  const updateComplaintStatus = (id: string, newStatus: ComplaintStatus, remarks: string) => {
-    const nowIso = new Date().toISOString();
-    setComplaints(prev => prev.map(c => {
-      if (c.id === id) {
-        const timelineEntry: TimelineAction = {
-          id: `TL-${Date.now()}`,
-          timestamp: nowIso,
-          actionType: 'STATUS_CHANGE',
-          title: `Status changed to ${newStatus}`,
-          performedBy: currentUser.name,
-          officerRole: currentUser.role,
-          bureau: currentUser.bureau,
-          remarks: remarks || `Status transition from ${c.status} to ${newStatus}.`,
-        };
-
-        logAudit('STATUS_UPDATED', 'COMPLAINT', c.caseNumber, `Status updated to ${newStatus}. Remarks: ${remarks}`);
-
-        return {
-          ...c,
-          status: newStatus,
-          lastActionDate: nowIso,
-          timeline: [timelineEntry, ...c.timeline],
-        };
-      }
-      return c;
-    }));
+  const updateComplaintStatus = async (id: string, newStatus: ComplaintStatus, remarks: string): Promise<Complaint> => {
+    try {
+      const res = await ComplaintApiService.updateStatus(id, newStatus, remarks);
+      const updated = res.data;
+      setComplaints(prev => prev.map(c => (c.id === id ? updated : c)));
+      logAudit(
+        'STATUS_UPDATED',
+        'COMPLAINT',
+        updated.caseNumber || updated.id,
+        `Status updated to ${newStatus}. Remarks: ${remarks}`
+      );
+      // Refresh complaints and analytics in background
+      loadDataFromApi().catch(err => console.warn('[ComplaintContext] Refresh complaints failed:', err.message));
+      reloadAnalytics().catch(err => console.warn('[ComplaintContext] Reload analytics failed:', err.message));
+      return updated;
+    } catch (err: any) {
+      console.error('[ComplaintContext] Failed to update complaint status:', err.message);
+      throw err;
+    }
   };
 
   const transferBureau = (id: string, targetBureau: BureauCode, reason: string, remarks: string) => {

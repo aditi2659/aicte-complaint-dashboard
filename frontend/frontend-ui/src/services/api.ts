@@ -18,6 +18,7 @@ import {
   mapBackendInstitutionToUi,
   mapUiReviewStatusToBackend,
   mapUiPriorityToBackend,
+  mapUiStatusToBackend,
   BUREAU_CODE_TO_NAME
 } from './adapter.ts';
 
@@ -421,11 +422,27 @@ export const ComplaintApiService = {
     };
   },
 
-  async updateStatus(id: string, status: ComplaintStatus): Promise<ApiResponse<{ id: string; status: ComplaintStatus }>> {
+  /**
+   * Update complaint regulatory status in PostgreSQL via PATCH /api/v1/complaints/:id/status
+   */
+  async updateStatus(id: string, status: ComplaintStatus, remarks: string): Promise<ApiResponse<Complaint>> {
+    const backendStatus = mapUiStatusToBackend(status);
+    const endpoint = `/api/v1/complaints/${encodeURIComponent(id)}/status`;
+
+    const res = await apiRequest<{ success: boolean; data: any }>(endpoint, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        status: backendStatus,
+        remarks: remarks ? remarks.trim() : '',
+      }),
+    });
+
+    const mapped = mapBackendComplaintToUi(res.data);
+
     return {
       success: true,
-      data: { id, status },
-      message: `Status updated to ${status} in local session.`,
+      data: mapped,
+      message: `Status updated to ${status}.`,
       timestamp: new Date().toISOString(),
     };
   },
