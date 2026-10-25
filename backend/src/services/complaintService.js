@@ -862,3 +862,244 @@ export async function updateComplaintStatus(rawComplaintId, payload = {}, user) 
   // Return refreshed complaint dossier
   return getComplaintById(complaintId, user);
 }
+
+/**
+ * Transfers a complaint to another AICTE bureau atomically.
+ * Records the transfer in complaint_transfers, updates the complaint's bureau and status to 'Transferred',
+ * and records a TRANSFER_RESOLVED audit entry in complaint_actions.
+ *
+ * @param {string} rawComplaintId - Target complaint ID
+ * @param {Object} payload - Transfer payload ({ destination_bureau, reason, remarks, notes })
+ * @param {Object} user - Authenticated user context
+ * @returns {Promise<Object>} Full refreshed complaint dossier
+ */
+export async function transferComplaint(rawComplaintId, payload = {}, user) {
+  if (!user) {
+    const error = new Error("Authentication required to transfer complaints");
+    error.code = "UNAUTHORIZED";
+    error.statusCode = 401;
+    throw error;
+  }
+
+  if (user.role === "AUDITOR") {
+    const error = new Error("Auditors have read-only access and cannot create or modify records");
+    error.code = "AUDITOR_READ_ONLY";
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const complaintId = rawComplaintId ? String(rawComplaintId).trim() : "";
+  if (!complaintId) {
+    const error = new Error("Complaint ID is required");
+    error.code = "INVALID_INPUT";
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Validate destination bureau
+  const rawTargetBureau =
+    payload.destination_bureau ||
+    payload.target_bureau ||
+    payload.to_bureau ||
+    payload.targetBureau ||
+    payload.bureau;
+
+  const targetStr = rawTargetBureau ? String(rawTargetBureau).trim() : "";
+  if (!targetStr) {
+    const error = new Error("Destination bureau is required for case transfer");
+    error.code = "INVALID_INPUT";
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Normalize bureau code or full name
+  let destinationBureau;
+  const upperTarget = targetStr.toUpperCase();
+  if (BUREAU_CODE_MAP[upperTarget]) {
+    destinationBureau = BUREAU_CODE_MAP[upperTarget];
+  } else {
+    const matched = VALID_BUREAUS.find((b) => b.toLowerCase() === targetStr.toLowerCase());
+    if (matched) {
+      destinationBureau = matched;
+    } else {
+      const error = new Error(
+        `Destination bureau '${targetStr}' is not recognized. Valid bureaus are: ${VALID_BUREAUS.join(", ")}`
+      );
+      error.code = "INVALID_INPUT";
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  // Validate transfer reason
+  const rawReason = payload.reason ? String(payload.reason).trim() : "";
+  if (!rawReason) {
+    const error = new Error("Mandatory transfer reason justifying inter-bureau handover is required");
+    error.code = "INVALID_INPUT";
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Optional remarks / handover directives
+  const rawRemarks = payload.remarks !== undefined ? payload.remarks : payload.notes;
+  const cleanRemarks = rawRemarks ? String(rawRemarks).trim() : "";
+
+  const activePool = getPool();
+  if (!activePool) {
+    throw new Error("Database pool is not configured.");
+  }
+  const client = await activePool.connect();
+
+  try {
+    await client.query("BEGIN;");
+
+    // 1. Fetch current complaint with row lock to serialize concurrent updates
+    const selectSql = `
+      SELECT complaint_id, bureau, originating_bureau, status, is_escalated
+      FROM complaints
+      WHERE complaint_id = $1
+      FOR UPDATE;
+    `;
+    const checkRes = await client.query(selectSql, [complaintId]);
+    if (checkRes.rows.length === 0) {
+      const error = new Error(`Complaint '${complaintId}' was not found`);
+      error.code = "COMPLAINT_NOT_FOUND";
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const currentCase = checkRes.rows[0];
+
+    // 2. Enforce Bureau-Level Authorization
+    if (user.role === "SUPER_ADMIN") {
+      // Super Admin may transfer any complaint
+    } else if (
+      user.role === "BUREAU_HEAD" ||
+      user.role === "BUREAU_OFFICER" ||
+      user.role === "GRIEVANCE_OFFICER"
+    ) {
+      if (!user.bureau) {
+        const error = new Error(`User account with role '${user.role}' has no bureau assigned.`);
+        error.code = "FORBIDDEN_BUREAU_ACCESS";
+        error.statusCode = 403;
+        throw error;
+      }
+      if (currentCase.bureau !== user.bureau) {
+        const error = new Error(
+          `Access forbidden: Complaint '${complaintId}' belongs to '${currentCase.bureau}', not '${user.bureau}'.`
+        );
+        error.code = "FORBIDDEN_BUREAU_ACCESS";
+        error.statusCode = 403;
+        throw error;
+      }
+    } else {
+      const error = new Error(`Role '${user.role}' is not authorized to transfer complaints`);
+      error.code = "FORBIDDEN_ROLE";
+      error.statusCode = 403;
+      throw error;
+    }
+
+    // 3. Terminal State Rules: Disposed cases cannot be transferred
+    if (TERMINAL_STATUSES.includes(currentCase.status)) {
+      const error = new Error(
+        `Cannot transfer complaint '${complaintId}' from terminal status '${currentCase.status}'. Disposed cases are closed to operational transfers.`
+      );
+      error.code = "INVALID_STATUS_TRANSITION";
+      error.statusCode = 409;
+      throw error;
+    }
+
+    // 4. Reject same-bureau transfer
+    if (destinationBureau === currentCase.bureau) {
+      const error = new Error(
+        `Complaint '${complaintId}' is already assigned to '${currentCase.bureau}'. Destination bureau must be different.`
+      );
+      error.code = "INVALID_INPUT";
+      error.statusCode = 400;
+      throw error;
+    }
+
+    // 5. Insert record into complaint_transfers
+    const actorId = UUID_REGEX.test(user.id) ? user.id : null;
+    const actorName = user.full_name || user.email || "System User";
+
+    const insertTransferSql = `
+      INSERT INTO complaint_transfers (
+        complaint_id,
+        from_bureau,
+        to_bureau,
+        reason,
+        status,
+        requested_by,
+        reviewed_by,
+        reviewed_at,
+        notes
+      ) VALUES ($1, $2, $3, $4, 'Completed', $5, $5, NOW(), $6)
+      RETURNING id, created_at;
+    `;
+    const transferRes = await client.query(insertTransferSql, [
+      complaintId,
+      currentCase.bureau,
+      destinationBureau,
+      rawReason,
+      actorId,
+      cleanRemarks || null
+    ]);
+    const transferId = transferRes.rows[0]?.id;
+
+    // 6. Update complaints table: new bureau and status 'Transferred'
+    const updateSql = `
+      UPDATE complaints
+      SET
+        bureau = $1,
+        status = 'Transferred',
+        updated_at = NOW()
+      WHERE complaint_id = $2
+      RETURNING *;
+    `;
+    await client.query(updateSql, [destinationBureau, complaintId]);
+
+    // 7. Record TRANSFER_RESOLVED audit action in complaint_actions
+    const actionDetails = JSON.stringify({
+      transfer_id: transferId,
+      from_bureau: currentCase.bureau,
+      to_bureau: destinationBureau,
+      reason: rawReason,
+      remarks: cleanRemarks,
+      previous_status: currentCase.status,
+      new_status: "Transferred"
+    });
+
+    const insertActionSql = `
+      INSERT INTO complaint_actions (
+        complaint_id,
+        action_type,
+        action,
+        notes,
+        actor_id,
+        actor_name,
+        details
+      ) VALUES ($1, 'TRANSFER_RESOLVED', $2, $3, $4, $5, $6)
+      RETURNING *;
+    `;
+
+    await client.query(insertActionSql, [
+      complaintId,
+      `Case transferred from ${currentCase.bureau} to ${destinationBureau}`,
+      cleanRemarks || rawReason,
+      actorId,
+      actorName,
+      actionDetails
+    ]);
+
+    await client.query("COMMIT;");
+  } catch (err) {
+    await client.query("ROLLBACK;");
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  // Return refreshed complaint dossier
+  return getComplaintById(complaintId, user);
+}

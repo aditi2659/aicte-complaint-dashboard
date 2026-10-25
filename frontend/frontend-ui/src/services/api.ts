@@ -447,11 +447,33 @@ export const ComplaintApiService = {
     };
   },
 
-  async transferBureau(id: string, targetBureau: BureauCode): Promise<ApiResponse<{ id: string; targetBureau: BureauCode }>> {
+  /**
+   * Transfer complaint custody to another AICTE bureau via POST /api/v1/complaints/:id/transfer
+   */
+  async transferBureau(
+    id: string,
+    targetBureau: BureauCode,
+    reason: string,
+    remarks?: string
+  ): Promise<ApiResponse<Complaint>> {
+    const backendBureau = BUREAU_CODE_TO_NAME[targetBureau] || targetBureau;
+    const endpoint = `/api/v1/complaints/${encodeURIComponent(id)}/transfer`;
+
+    const res = await apiRequest<{ success: boolean; data: any }>(endpoint, {
+      method: 'POST',
+      body: JSON.stringify({
+        destination_bureau: backendBureau,
+        reason: reason ? reason.trim() : '',
+        remarks: remarks ? remarks.trim() : '',
+      }),
+    });
+
+    const mapped = mapBackendComplaintToUi(res.data);
+
     return {
       success: true,
-      data: { id, targetBureau },
-      message: `Case transferred to ${targetBureau} in local session.`,
+      data: mapped,
+      message: `Case successfully transferred to ${targetBureau}.`,
       timestamp: new Date().toISOString(),
     };
   },

@@ -603,11 +603,106 @@ async function runTests() {
       await pool.query(
         "DELETE FROM complaint_actions WHERE complaint_id = 'CMP-1003' AND action_type = 'STATUS_CHANGE';"
       );
+    }
+  });
+
+  // 10. Complaint Bureau Transfers API Integration
+  console.log("\n--- 10. Complaint Bureau Transfers API Integration ---");
+
+  await itAsync("SDC Officer successfully transfers CMP-1003 to Approval Bureau (AB)", async () => {
+    const res = await request("/api/v1/complaints/CMP-1003/transfer", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${sdcToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        destination_bureau: "AB",
+        reason: "Approval freeze review required",
+        remarks: "Evidence gathered by SDC inspection squad"
+      })
+    });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.success, true);
+    assert.strictEqual(res.body.data.complaint_id, "CMP-1003");
+    assert.strictEqual(res.body.data.bureau, "Approval Bureau");
+    assert.strictEqual(res.body.data.status, "Transferred");
+
+    const uiMapped = mapBackendComplaintToUi(res.body.data);
+    assert.strictEqual(uiMapped.currentBureau, "AB");
+    assert.strictEqual(uiMapped.status, "TRANSFERRED");
+  });
+
+  await itAsync("rejects bureau transfer with empty reason (HTTP 400 INVALID_INPUT)", async () => {
+    const res = await request("/api/v1/complaints/CMP-1003/transfer", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${sdcToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        destination_bureau: "AB",
+        reason: "   "
+      })
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.body.success, false);
+    assert.strictEqual(res.body.error.code, "INVALID_INPUT");
+  });
+
+  await itAsync("rejects same-bureau transfer attempt (HTTP 400 INVALID_INPUT)", async () => {
+    const res = await request("/api/v1/complaints/CMP-1003/transfer", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        destination_bureau: "Approval Bureau",
+        reason: "Redundant transfer to current custody"
+      })
+    });
+
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.body.success, false);
+    assert.strictEqual(res.body.error.code, "INVALID_INPUT");
+  });
+
+  await itAsync("blocks cross-bureau transfer by SDC Officer on GRC complaint (HTTP 403)", async () => {
+    const res = await request("/api/v1/complaints/CMP-1002/transfer", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${sdcToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        destination_bureau: "AB",
+        reason: "Unauthorized transfer attempt"
+      })
+    });
+
+    assert.strictEqual(res.status, 403);
+    assert.strictEqual(res.body.error.code, "FORBIDDEN_BUREAU_ACCESS");
+  });
+
+  await itAsync("restores CMP-1003 baseline bureau & status and cleans up transfer records", async () => {
+    const { getPool } = await import("../../../backend/src/config/db.js");
+    const pool = getPool();
+    if (pool) {
+      await pool.query(
+        "UPDATE complaints SET bureau = 'Student Development Cell', status = 'Open', updated_at = NOW() WHERE complaint_id = 'CMP-1003';"
+      );
+      await pool.query("DELETE FROM complaint_transfers WHERE complaint_id = 'CMP-1003';");
+      await pool.query(
+        "DELETE FROM complaint_actions WHERE complaint_id = 'CMP-1003' AND action_type = 'TRANSFER_RESOLVED';"
+      );
       await pool.end();
     }
   });
 
-  // 10. Summary
+  // 11. Summary
   console.log("\n========================================");
   console.log(`Frontend Integration: ${passed} passed, ${failed} failed`);
   console.log("========================================\n");

@@ -88,7 +88,7 @@ interface ComplaintContextType {
   getStats: () => DashboardStats;
   addComplaint: (data: Partial<Complaint>) => Promise<Complaint>;
   updateComplaintStatus: (id: string, newStatus: ComplaintStatus, remarks: string) => Promise<Complaint>;
-  transferBureau: (id: string, targetBureau: BureauCode, reason: string, remarks: string) => void;
+  transferBureau: (id: string, targetBureau: BureauCode, reason: string, remarks: string) => Promise<Complaint>;
   reassignOfficer: (id: string, officerId: string, remarks: string) => void;
   addTimelineAction: (id: string, actionType: TimelineAction['actionType'], title: string, remarks: string, docRef?: string) => void;
   reviewOverlap: (id: string, status: OverlapReviewStatus, reviewNotes: string, relationshipType?: OverlapMatch['relationshipType']) => Promise<void>;
@@ -440,36 +440,25 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   };
 
-  const transferBureau = (id: string, targetBureau: BureauCode, reason: string, remarks: string) => {
-    const nowIso = new Date().toISOString();
-    const targetOfficer = ASSIGNED_OFFICERS.find(o => o.bureau === targetBureau) || ASSIGNED_OFFICERS[0];
-
-    setComplaints(prev => prev.map(c => {
-      if (c.id === id) {
-        const timelineEntry: TimelineAction = {
-          id: `TL-${Date.now()}`,
-          timestamp: nowIso,
-          actionType: 'BUREAU_TRANSFER',
-          title: `Transferred from ${c.currentBureau} to ${targetBureau}`,
-          performedBy: currentUser.name,
-          officerRole: currentUser.role,
-          bureau: currentUser.bureau,
-          remarks: `Transfer Reason: ${reason}. Remarks: ${remarks}. Handed over to ${targetOfficer.name}.`,
-        };
-
-        logAudit('BUREAU_TRANSFER', 'COMPLAINT', c.caseNumber, `Transferred from ${c.currentBureau} to ${targetBureau}. Reason: ${reason}`);
-
-        return {
-          ...c,
-          currentBureau: targetBureau,
-          assignedOfficer: targetOfficer,
-          status: 'TRANSFERRED',
-          lastActionDate: nowIso,
-          timeline: [timelineEntry, ...c.timeline],
-        };
-      }
-      return c;
-    }));
+  const transferBureau = async (id: string, targetBureau: BureauCode, reason: string, remarks: string): Promise<Complaint> => {
+    try {
+      const res = await ComplaintApiService.transferBureau(id, targetBureau, reason, remarks);
+      const updated = res.data;
+      setComplaints(prev => prev.map(c => (c.id === id ? updated : c)));
+      logAudit(
+        'BUREAU_TRANSFER',
+        'COMPLAINT',
+        updated.caseNumber || updated.id,
+        `Transferred to ${targetBureau}. Reason: ${reason}`
+      );
+      // Refresh complaints and analytics in background
+      loadDataFromApi().catch(err => console.warn('[ComplaintContext] Refresh complaints failed:', err.message));
+      reloadAnalytics().catch(err => console.warn('[ComplaintContext] Reload analytics failed:', err.message));
+      return updated;
+    } catch (err: any) {
+      console.error('[ComplaintContext] Failed to transfer complaint:', err.message);
+      throw err;
+    }
   };
 
   const reassignOfficer = (id: string, officerId: string, remarks: string) => {
