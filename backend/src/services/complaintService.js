@@ -1,6 +1,24 @@
-import { query } from "../config/db.js";
+import { query, getPool } from "../config/db.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const VALID_BUREAUS = [
+  "Student Development Cell",
+  "Grievance Redressal Cell",
+  "Quality Assurance Cell",
+  "Approval Bureau",
+  "Policy & Academic Planning Bureau",
+  "Faculty Development Bureau"
+];
+
+export const BUREAU_CODE_MAP = {
+  SDC: "Student Development Cell",
+  PGRC: "Grievance Redressal Cell",
+  RB: "Quality Assurance Cell",
+  AB: "Approval Bureau",
+  PAPB: "Policy & Academic Planning Bureau",
+  FDB: "Faculty Development Bureau"
+};
 
 /**
  * List complaints with filtering, search, bounded pagination, and database-level bureau scoping.
@@ -316,4 +334,306 @@ export async function getLegacyComplaints(user = null) {
     count: result.rows.length,
     data: result.rows
   };
+}
+
+/**
+ * Extension point for triggering post-creation workflows (e.g., cross-bureau overlap matching).
+ * Preserves clean extension point without implementing automatic matching yet.
+ */
+export async function triggerPostCreationHook(complaint) {
+  // Extension point: Aditi's complaint-matching pipeline hook will be invoked here.
+  return Promise.resolve();
+}
+
+/**
+ * Creates and persists a new complaint transactionally with concurrency-safe advisory locking
+ * and records its CREATED audit action in complaint_actions.
+ *
+ * @param {Object} payload - Complaint registration payload
+ * @param {Object} user - Authenticated user initiating registration
+ * @returns {Promise<Object>} Full created complaint record
+ */
+export async function createComplaint(payload = {}, user) {
+  if (!user) {
+    const error = new Error("Authentication required to register complaints");
+    error.code = "UNAUTHORIZED";
+    error.statusCode = 401;
+    throw error;
+  }
+
+  if (user.role === "AUDITOR") {
+    const error = new Error("Auditors have read-only access and cannot create or modify records");
+    error.code = "AUDITOR_READ_ONLY";
+    error.statusCode = 403;
+    throw error;
+  }
+
+  // 1. Validate payload inputs
+  const rawInstitutionId = payload.institution_id || payload.institutionId;
+  if (!rawInstitutionId || typeof rawInstitutionId !== "string" || !rawInstitutionId.trim()) {
+    const error = new Error("Institution ID is required");
+    error.code = "INVALID_INPUT";
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const title = (payload.title || payload.subject || "").trim();
+  if (!title) {
+    const error = new Error("Complaint title/subject is required");
+    error.code = "INVALID_INPUT";
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const description = (payload.description || "").trim();
+  if (!description) {
+    const error = new Error("Complaint description is required");
+    error.code = "INVALID_INPUT";
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const category = (payload.category || payload.category_label || payload.categoryLabel || "").trim();
+  if (!category) {
+    const error = new Error("Complaint category is required");
+    error.code = "INVALID_INPUT";
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const rawBureau = (payload.bureau || payload.current_bureau || payload.currentBureau || "").trim();
+  if (!rawBureau) {
+    const error = new Error("Bureau is required");
+    error.code = "INVALID_INPUT";
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Normalize bureau
+  const bureauUpper = rawBureau.toUpperCase();
+  const targetBureau = BUREAU_CODE_MAP[bureauUpper] || VALID_BUREAUS.find((b) => b.toLowerCase() === rawBureau.toLowerCase());
+  if (!targetBureau) {
+    const error = new Error(`Bureau '${rawBureau}' is not a recognized AICTE bureau`);
+    error.code = "INVALID_INPUT";
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Normalize priority
+  let priority = "Medium";
+  if (payload.priority !== undefined && payload.priority !== null) {
+    const p = String(payload.priority).trim().toLowerCase();
+    if (p === "low") {
+      priority = "Low";
+    } else if (p === "medium" || p === "normal") {
+      priority = "Medium";
+    } else if (p === "high") {
+      priority = "High";
+    } else if (p === "critical" || p === "urgent") {
+      priority = "Critical";
+    } else {
+      const error = new Error("Priority must be one of: Low, Medium, High, Critical");
+      error.code = "INVALID_INPUT";
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  // Compute or validate due_date
+  let dueDate;
+  if (payload.due_date) {
+    const parsed = new Date(payload.due_date);
+    if (Number.isNaN(parsed.getTime())) {
+      const error = new Error("Invalid 'due_date' timestamp provided");
+      error.code = "INVALID_INPUT";
+      error.statusCode = 400;
+      throw error;
+    }
+    dueDate = parsed.toISOString();
+  } else {
+    const slaDays = {
+      Critical: 7,
+      High: 15,
+      Medium: 30,
+      Low: 45
+    }[priority] || 30;
+    dueDate = new Date(Date.now() + slaDays * 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  // 2. Validate Institution Existence
+  const instCheckSql = `
+    SELECT id, aicte_permanent_id, institution_name, institution_type, state, approval_status
+    FROM institutions
+    WHERE id::text = $1 OR aicte_permanent_id = $1;
+  `;
+  const instResult = await query(instCheckSql, [rawInstitutionId.trim()]);
+  if (instResult.rows.length === 0) {
+    const error = new Error(`Institution '${rawInstitutionId}' was not found`);
+    error.code = "INSTITUTION_NOT_FOUND";
+    error.statusCode = 404;
+    throw error;
+  }
+  const institution = instResult.rows[0];
+
+  // 3. Enforce Bureau-Level Authorization
+  if (user.role === "SUPER_ADMIN") {
+    // Permitted for all bureaus
+  } else if (user.role === "BUREAU_HEAD" || user.role === "BUREAU_OFFICER" || user.role === "GRIEVANCE_OFFICER") {
+    if (!user.bureau) {
+      const error = new Error(`User account with role '${user.role}' has no bureau assigned.`);
+      error.code = "FORBIDDEN_BUREAU_ACCESS";
+      error.statusCode = 403;
+      throw error;
+    }
+    if (targetBureau !== user.bureau) {
+      const error = new Error(
+        `Bureau staff (${user.role}) may only register complaints within their assigned bureau (${user.bureau}). Attempted: '${targetBureau}'.`
+      );
+      error.code = "FORBIDDEN_BUREAU_ACCESS";
+      error.statusCode = 403;
+      throw error;
+    }
+  } else {
+    const error = new Error(`Role '${user.role}' is not authorized to register complaints`);
+    error.code = "FORBIDDEN_ROLE";
+    error.statusCode = 403;
+    throw error;
+  }
+
+  // 4. Concurrency-Safe Transactional Persistence
+  const activePool = getPool();
+  if (!activePool) {
+    throw new Error("Database pool is not configured.");
+  }
+  const client = await activePool.connect();
+
+  let createdComplaint;
+  try {
+    await client.query("BEGIN;");
+
+    // Acquire PostgreSQL transactional advisory lock to serialize sequential ID generation
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('aicte_complaint_id_sequence'));");
+
+    const maxIdSql = `
+      SELECT COALESCE(MAX(SUBSTRING(complaint_id FROM 5)::INTEGER), 1000) AS max_num
+      FROM complaints
+      WHERE complaint_id ~ '^CMP-[0-9]+$';
+    `;
+    const lockRes = await client.query(maxIdSql);
+    const nextNum = Number(lockRes.rows[0].max_num) + 1;
+    const newComplaintId = `CMP-${nextNum}`;
+
+    const creatorName = user.full_name || user.email || "System User";
+    const creatorId = UUID_REGEX.test(user.id) ? user.id : null;
+
+    const insertComplaintSql = `
+      INSERT INTO complaints (
+        complaint_id,
+        institution_id,
+        title,
+        category,
+        description,
+        bureau,
+        originating_bureau,
+        priority,
+        status,
+        due_date,
+        is_escalated,
+        created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Open', $9, false, $10)
+      RETURNING *;
+    `;
+
+    const complaintRes = await client.query(insertComplaintSql, [
+      newComplaintId,
+      institution.id,
+      title,
+      category,
+      description,
+      targetBureau,
+      targetBureau,
+      priority,
+      dueDate,
+      creatorName
+    ]);
+
+    const row = complaintRes.rows[0];
+
+    // Record CREATED audit action in complaint_actions
+    const actionDetails = JSON.stringify({
+      category,
+      priority,
+      bureau: targetBureau,
+      institution_id: institution.id,
+      institution_name: institution.institution_name,
+      complainant_type: payload.complainant_type || payload.complainantType || null,
+      lodging_channel: payload.lodging_channel || payload.lodgingChannel || null
+    });
+
+    const insertActionSql = `
+      INSERT INTO complaint_actions (
+        complaint_id,
+        action_type,
+        action,
+        notes,
+        actor_id,
+        actor_name,
+        details
+      ) VALUES ($1, 'CREATED', $2, $3, $4, $5, $6)
+      RETURNING *;
+    `;
+
+    const actionRes = await client.query(insertActionSql, [
+      newComplaintId,
+      "Complaint registered at ingestion gateway",
+      title,
+      creatorId,
+      creatorName,
+      actionDetails
+    ]);
+
+    await client.query("COMMIT;");
+
+    createdComplaint = {
+      id: row.complaint_id,
+      complaint_id: row.complaint_id,
+      title: row.title,
+      category: row.category,
+      description: row.description,
+      bureau: row.bureau,
+      originating_bureau: row.originating_bureau,
+      priority: row.priority,
+      status: row.status,
+      due_date: row.due_date,
+      is_escalated: row.is_escalated,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      created_by: row.created_by,
+      has_overlap: false,
+      matched_case_ids: [],
+      institution: {
+        id: institution.id,
+        aicte_permanent_id: institution.aicte_permanent_id,
+        name: institution.institution_name,
+        type: institution.institution_type,
+        state: institution.state,
+        approval_status: institution.approval_status
+      },
+      assigned_to: null,
+      actions: actionRes.rows,
+      transfers: []
+    };
+  } catch (txError) {
+    await client.query("ROLLBACK;");
+    throw txError;
+  } finally {
+    client.release();
+  }
+
+  // 5. Clean extension point for future automated matching trigger
+  triggerPostCreationHook(createdComplaint).catch((err) => {
+    console.error(`[ComplaintCreation] Post-creation hook failed for ${createdComplaint.complaint_id}:`, err.message);
+  });
+
+  return createdComplaint;
 }

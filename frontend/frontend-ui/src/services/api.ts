@@ -17,6 +17,7 @@ import {
   mapBackendOverlapToUi,
   mapBackendInstitutionToUi,
   mapUiReviewStatusToBackend,
+  mapUiPriorityToBackend,
   BUREAU_CODE_TO_NAME
 } from './adapter.ts';
 
@@ -387,12 +388,35 @@ export const ComplaintApiService = {
     };
   },
 
-  // Client-side action fallback stubs for unbuilt backend mutation endpoints
+  /**
+   * Register a new complaint in PostgreSQL via backend POST /api/v1/complaints
+   */
   async createComplaint(payload: Partial<Complaint>): Promise<ApiResponse<Complaint>> {
+    const rawBureau = (payload.currentBureau || (payload as any).bureau) as BureauCode | undefined;
+    const bureauName = rawBureau && BUREAU_CODE_TO_NAME[rawBureau] ? BUREAU_CODE_TO_NAME[rawBureau] : rawBureau;
+
+    const requestBody = {
+      institution_id: payload.institutionId,
+      title: payload.subject,
+      category: payload.categoryLabel || payload.category,
+      description: payload.description,
+      bureau: bureauName,
+      priority: payload.priority ? mapUiPriorityToBackend(payload.priority) : 'Medium',
+      complainant_type: payload.complainantType,
+      lodging_channel: payload.lodgingChannel
+    };
+
+    const res = await apiRequest<{ success: boolean; data: any }>('/api/v1/complaints', {
+      method: 'POST',
+      body: JSON.stringify(requestBody),
+    });
+
+    const mapped = mapBackendComplaintToUi(res.data);
+
     return {
       success: true,
-      data: payload as Complaint,
-      message: 'Complaint registered in local session (backend mutation pending).',
+      data: mapped,
+      message: `Complaint ${mapped.caseNumber || mapped.id} registered successfully.`,
       timestamp: new Date().toISOString(),
     };
   },

@@ -86,7 +86,7 @@ interface ComplaintContextType {
   getComplaintById: (id: string) => Complaint | undefined;
   getInstitutionById: (id: string) => Institution | undefined;
   getStats: () => DashboardStats;
-  addComplaint: (data: Partial<Complaint>) => Complaint;
+  addComplaint: (data: Partial<Complaint>) => Promise<Complaint>;
   updateComplaintStatus: (id: string, newStatus: ComplaintStatus, remarks: string) => void;
   transferBureau: (id: string, targetBureau: BureauCode, reason: string, remarks: string) => void;
   reassignOfficer: (id: string, officerId: string, remarks: string) => void;
@@ -398,52 +398,25 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setAuditLogs(prev => [newLog, ...prev]);
   };
 
-  const addComplaint = (data: Partial<Complaint>): Complaint => {
-    const nowIso = new Date().toISOString();
-    const regNum = `AICTE/${currentUser.bureau}/2026/${String(complaints.length + 1).padStart(4, '0')}`;
-    const newId = `CMP-${Date.now()}`;
-
-    const newComplaint: Complaint = {
-      id: newId,
-      caseNumber: regNum,
-      institutionId: data.institutionId || 'INST-01',
-      institutionName: data.institutionName || 'Demo Institute of Technology',
-      aictePermanentId: data.aictePermanentId || '1-10992341',
-      region: data.region || 'NORTH',
-      state: data.state || 'New Delhi',
-      category: data.category || 'INFRASTRUCTURE_DEFICIENCY',
-      categoryLabel: data.categoryLabel || 'Infrastructure Deficiency',
-      subject: data.subject || 'New Registered Grievance',
-      description: data.description || 'Grievance submitted via portal ingestion gateway.',
-      currentBureau: data.currentBureau || currentUser.bureau,
-      assignedOfficer: ASSIGNED_OFFICERS.find(o => o.bureau === (data.currentBureau || currentUser.bureau)) || ASSIGNED_OFFICERS[0],
-      status: 'RECEIVED',
-      complainantType: data.complainantType || 'STUDENT',
-      lodgingChannel: data.lodgingChannel || 'ONLINE_PORTAL',
-      registrationDate: nowIso,
-      lastActionDate: nowIso,
-      dueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString(),
-      priority: data.priority || 'NORMAL',
-      hasActiveOverlap: false,
-      linkedComplaintIds: [],
-      supportingDocs: data.supportingDocs || [],
-      timeline: [
-        {
-          id: `TL-${Date.now()}`,
-          timestamp: nowIso,
-          actionType: 'REGISTRATION',
-          title: 'Complaint Registered at Ingestion Gateway',
-          performedBy: currentUser.name,
-          officerRole: currentUser.role,
-          bureau: currentUser.bureau,
-          remarks: 'Complaint formally registered and routed for initial triage.',
-        }
-      ],
-    };
-
-    setComplaints(prev => [newComplaint, ...prev]);
-    logAudit('COMPLAINT_REGISTERED', 'COMPLAINT', regNum, `Registered with category ${newComplaint.categoryLabel}`);
-    return newComplaint;
+  const addComplaint = async (data: Partial<Complaint>): Promise<Complaint> => {
+    try {
+      const res = await ComplaintApiService.createComplaint(data);
+      const newComplaint = res.data;
+      setComplaints(prev => [newComplaint, ...prev.filter(c => c.id !== newComplaint.id)]);
+      logAudit(
+        'COMPLAINT_REGISTERED',
+        'COMPLAINT',
+        newComplaint.caseNumber || newComplaint.id,
+        `Registered with category ${newComplaint.categoryLabel || newComplaint.category}`
+      );
+      // Refresh complaints and analytics in background
+      loadDataFromApi().catch(err => console.warn('[ComplaintContext] Refresh complaints failed:', err.message));
+      reloadAnalytics().catch(err => console.warn('[ComplaintContext] Reload analytics failed:', err.message));
+      return newComplaint;
+    } catch (err: any) {
+      console.error('[ComplaintContext] Failed to register complaint:', err.message);
+      throw err;
+    }
   };
 
   const updateComplaintStatus = (id: string, newStatus: ComplaintStatus, remarks: string) => {

@@ -5,6 +5,7 @@ import * as overlapController from "../../controllers/overlapController.js";
 const router = Router();
 
 router.get("/", complaintController.list);
+router.post("/", complaintController.create);
 router.get("/:id", complaintController.getById);
 router.get("/:id/related", overlapController.getRelatedForComplaint);
 

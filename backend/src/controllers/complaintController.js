@@ -57,3 +57,31 @@ export async function getById(req, res, next) {
     return next(error);
   }
 }
+
+/**
+ * POST /api/v1/complaints
+ */
+export async function create(req, res, next) {
+  try {
+    const complaint = await complaintService.createComplaint(req.body, req.user);
+    return sendSuccess(res, complaint, null, 201);
+  } catch (error) {
+    if (error.code === "INSTITUTION_NOT_FOUND") {
+      return sendError(res, error.code, error.message, 404);
+    }
+    if (
+      error.code === "FORBIDDEN_BUREAU_ACCESS" ||
+      error.code === "FORBIDDEN_ROLE" ||
+      error.code === "AUDITOR_READ_ONLY"
+    ) {
+      return sendError(res, error.code, error.message, 403);
+    }
+    if (error.code === "UNAUTHORIZED") {
+      return sendError(res, error.code, error.message, 401);
+    }
+    if (error.code === "INVALID_INPUT") {
+      return sendError(res, error.code, error.message, 400);
+    }
+    return next(error);
+  }
+}

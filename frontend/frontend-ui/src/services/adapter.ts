@@ -1,4 +1,4 @@
-﻿import type {
+import type {
   Complaint,
   ComplaintCategory,
   ComplaintStatus,
@@ -15,6 +15,7 @@ export const BUREAU_NAME_TO_CODE: Record<string, BureauCode> = {
   'Approval Bureau': 'AB',
   'Policy & Academic Planning Bureau': 'PAPB',
   'Quality Assurance Cell': 'RB',
+  'Faculty Development Bureau': 'FDB',
 };
 
 export const BUREAU_CODE_TO_NAME: Record<BureauCode, string> = {
@@ -61,6 +62,14 @@ export function mapBackendPriorityToUi(priority?: string): 'LOW' | 'NORMAL' | 'H
   if (p === 'HIGH') return 'HIGH';
   if (p === 'CRITICAL' || p === 'URGENT') return 'CRITICAL';
   return 'NORMAL';
+}
+
+export function mapUiPriorityToBackend(priority?: string): 'Low' | 'Medium' | 'High' | 'Critical' {
+  const p = (priority || '').toUpperCase().trim();
+  if (p === 'LOW') return 'Low';
+  if (p === 'HIGH') return 'High';
+  if (p === 'CRITICAL' || p === 'URGENT') return 'Critical';
+  return 'Medium';
 }
 
 export function mapBackendCategoryToUi(cat?: string): { category: ComplaintCategory; categoryLabel: string } {

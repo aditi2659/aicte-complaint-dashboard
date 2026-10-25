@@ -4,6 +4,15 @@
  */
 
 import assert from "node:assert";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import fs from "node:fs";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const envPath = path.resolve(__dirname, "../../../backend/.env");
+if (fs.existsSync(envPath) && typeof process.loadEnvFile === "function") {
+  process.loadEnvFile(envPath);
+}
 import {
   BUREAU_NAME_TO_CODE,
   BUREAU_CODE_TO_NAME,
@@ -15,7 +24,8 @@ import {
   mapBackendComplaintToUi,
   mapBackendOverlapToUi,
   mapUiReviewStatusToBackend,
-  mapBackendInstitutionToUi
+  mapBackendInstitutionToUi,
+  mapUiPriorityToBackend
 } from "../src/services/adapter.ts";
 
 const BASE_URL = process.env.API_BASE_URL || "http://localhost:4000";
@@ -118,6 +128,18 @@ async function runTests() {
     assert.strictEqual(mapBackendPriorityToUi("High"), "HIGH");
     assert.strictEqual(mapBackendPriorityToUi("Medium"), "NORMAL");
     assert.strictEqual(mapBackendPriorityToUi("Low"), "LOW");
+  });
+
+  it("maps UI priorities to backend values", () => {
+    assert.strictEqual(mapUiPriorityToBackend("LOW"), "Low");
+    assert.strictEqual(mapUiPriorityToBackend("NORMAL"), "Medium");
+    assert.strictEqual(mapUiPriorityToBackend("HIGH"), "High");
+    assert.strictEqual(mapUiPriorityToBackend("CRITICAL"), "Critical");
+  });
+
+  it("maps Faculty Development Bureau to FDB code", () => {
+    assert.strictEqual(BUREAU_NAME_TO_CODE["Faculty Development Bureau"], "FDB");
+    assert.strictEqual(BUREAU_CODE_TO_NAME["FDB"], "Faculty Development Bureau");
   });
 
   // 2. Complaint Object Normalization
@@ -467,7 +489,52 @@ async function runTests() {
     }
   });
 
-  // 8. Summary
+  // 8. Complaint Registration API Integration
+  console.log("\n--- 8. Complaint Registration API Integration ---");
+
+  await itAsync("SDC Officer registers complaint via POST /api/v1/complaints", async () => {
+    const instRes = await request("/api/v1/institutions", {
+      headers: { Authorization: `Bearer ${sdcToken}` }
+    });
+    assert.strictEqual(instRes.status, 200);
+    const instId = instRes.body.data[0].id;
+
+    const res = await request("/api/v1/complaints", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${sdcToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        institution_id: instId,
+        title: "Frontend Integration Test Registration",
+        description: "Checking end-to-end registration from frontend payload adapter",
+        category: "Infrastructure Deficiency",
+        bureau: "SDC",
+        priority: "NORMAL",
+        complainant_type: "STUDENT",
+        lodging_channel: "ONLINE_PORTAL"
+      })
+    });
+
+    assert.strictEqual(res.status, 201);
+    assert.strictEqual(res.body.success, true);
+    assert(res.body.data.complaint_id.startsWith("CMP-"));
+    assert.strictEqual(res.body.data.bureau, "Student Development Cell");
+    assert.strictEqual(res.body.data.priority, "Medium");
+    assert.strictEqual(res.body.data.status, "Open");
+
+    // Clean up created complaint
+    const { getPool } = await import("../../../backend/src/config/db.js");
+    const pool = getPool();
+    if (pool) {
+      await pool.query("DELETE FROM complaint_actions WHERE complaint_id = $1;", [res.body.data.complaint_id]);
+      await pool.query("DELETE FROM complaints WHERE complaint_id = $1;", [res.body.data.complaint_id]);
+      await pool.end();
+    }
+  });
+
+  // 9. Summary
   console.log("\n========================================");
   console.log(`Frontend Integration: ${passed} passed, ${failed} failed`);
   console.log("========================================\n");
