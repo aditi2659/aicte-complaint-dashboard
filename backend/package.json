@@ -19,7 +19,8 @@
     "test:registration": "node scripts/test-complaint-registration.js",
     "test:status": "node scripts/test-complaint-status.js",
     "test:transfer": "node scripts/test-complaint-transfer.js",
-    "test": "node scripts/test-phase3.js && node scripts/test-phase4.js && node scripts/test-phase5.js && node scripts/test-analytics-adapter.js && node scripts/test-analytics-routes.js && node scripts/test-complaint-overlap.js && node scripts/test-overlap-review.js && node scripts/test-complaint-registration.js && node scripts/test-complaint-status.js && node scripts/test-complaint-transfer.js"
+    "test:audit": "node scripts/test-audit-logs.js",
+    "test": "node scripts/test-phase3.js && node scripts/test-phase4.js && node scripts/test-phase5.js && node scripts/test-analytics-adapter.js && node scripts/test-analytics-routes.js && node scripts/test-complaint-overlap.js && node scripts/test-overlap-review.js && node scripts/test-complaint-registration.js && node scripts/test-complaint-status.js && node scripts/test-complaint-transfer.js && node scripts/test-audit-logs.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

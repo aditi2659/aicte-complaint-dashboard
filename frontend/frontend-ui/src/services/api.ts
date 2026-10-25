@@ -19,6 +19,7 @@ import {
   mapUiReviewStatusToBackend,
   mapUiPriorityToBackend,
   mapUiStatusToBackend,
+  mapBackendAuditLogToUi,
   BUREAU_CODE_TO_NAME
 } from './adapter.ts';
 
@@ -478,10 +479,14 @@ export const ComplaintApiService = {
     };
   },
 
-  async getAuditLogs(): Promise<ApiResponse<AuditLog[]>> {
+  async getAuditLogs(page = 1, limit = 50): Promise<ApiResponse<AuditLog[]>> {
+    const endpoint = `/api/v1/audit-logs?page=${page}&limit=${limit}`;
+    const res = await apiRequest<{ success: boolean; data: any[]; meta?: any }>(endpoint);
+    const logs = (res.data || []).map(mapBackendAuditLogToUi);
+
     return {
       success: true,
-      data: [],
+      data: logs,
       timestamp: new Date().toISOString(),
     };
   },

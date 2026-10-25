@@ -169,16 +169,20 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const loadDataFromApi = useCallback(async () => {
     setApiLoading(true);
     try {
-      const [compRes, ovrRes, instRes] = await Promise.all([
+      const [compRes, ovrRes, instRes, logsRes] = await Promise.all([
         ComplaintApiService.getComplaints(),
         ComplaintApiService.getOverlaps(),
         ComplaintApiService.getInstitutions(complaints),
+        ComplaintApiService.getAuditLogs().catch(() => ({ data: [] })),
       ]);
 
       setComplaints(compRes.data);
       setOverlaps(ovrRes.data);
       if (instRes.data && instRes.data.length > 0) {
         setInstitutions(instRes.data);
+      }
+      if (logsRes && logsRes.data) {
+        setAuditLogs(logsRes.data);
       }
       setDataSource('api');
       setApiError(null);
@@ -225,10 +229,11 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           }
         }
 
-        const [compRes, ovrRes, instRes] = await Promise.all([
+        const [compRes, ovrRes, instRes, logsRes] = await Promise.all([
           ComplaintApiService.getComplaints(),
           ComplaintApiService.getOverlaps(),
           ComplaintApiService.getInstitutions(),
+          ComplaintApiService.getAuditLogs().catch(() => ({ data: [] })),
         ]);
 
         if (isMounted) {
@@ -236,6 +241,9 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           setOverlaps(ovrRes.data);
           if (instRes.data && instRes.data.length > 0) {
             setInstitutions(instRes.data);
+          }
+          if (logsRes && logsRes.data) {
+            setAuditLogs(logsRes.data);
           }
           setDataSource('api');
           setApiError(null);
@@ -295,16 +303,20 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setCurrentUserState(authenticatedUser);
 
       // Load complaints and overlaps scoped to this user
-      const [compRes, ovrRes, instRes] = await Promise.all([
+      const [compRes, ovrRes, instRes, logsRes] = await Promise.all([
         ComplaintApiService.getComplaints(),
         ComplaintApiService.getOverlaps(),
         ComplaintApiService.getInstitutions(),
+        ComplaintApiService.getAuditLogs().catch(() => ({ data: [] })),
       ]);
 
       setComplaints(compRes.data);
       setOverlaps(ovrRes.data);
       if (instRes.data && instRes.data.length > 0) {
         setInstitutions(instRes.data);
+      }
+      if (logsRes && logsRes.data) {
+        setAuditLogs(logsRes.data);
       }
       setDataSource('api');
       setApiError(null);

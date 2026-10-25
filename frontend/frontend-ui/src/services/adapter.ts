@@ -6,7 +6,8 @@ import type {
   TimelineAction,
   OverlapMatch,
   OverlapReviewStatus,
-  Institution
+  Institution,
+  AuditLog
 } from '../types/index.ts';
 
 export const BUREAU_NAME_TO_CODE: Record<string, BureauCode> = {
@@ -246,5 +247,36 @@ export function mapBackendInstitutionToUi(raw: any, complaints: Complaint[]): In
     lastComplaintDate: instComplaints[0]?.registrationDate || raw.updated_at || new Date().toISOString(),
     accreditation: 'NBA / NAAC Accredited',
     approvedIntake: 600,
+  };
+}
+
+export function mapBackendAuditLogToUi(raw: any): AuditLog {
+  const bureauCode = (raw.bureau && BUREAU_NAME_TO_CODE[raw.bureau])
+    || (raw.bureau as BureauCode)
+    || (raw.originating_bureau && BUREAU_NAME_TO_CODE[raw.originating_bureau])
+    || 'SDC';
+
+  let detailsText = raw.notes || raw.action || '';
+  if (!detailsText && raw.details) {
+    if (typeof raw.details === 'string') {
+      detailsText = raw.details;
+    } else {
+      detailsText = Object.entries(raw.details)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(', ');
+    }
+  }
+
+  return {
+    id: String(raw.id || `audit-${Date.now()}`),
+    timestamp: raw.created_at || new Date().toISOString(),
+    user: raw.actor?.name || raw.actor_name || 'System User',
+    role: raw.actor?.role || 'SYSTEM',
+    bureau: bureauCode,
+    action: raw.action_type || raw.action || 'RECORD_ACTION',
+    entityType: 'COMPLAINT',
+    entityId: raw.complaint_id || '',
+    details: detailsText,
+    ipAddress: raw.details?.ip_address || raw.details?.ipAddress || '10.0.0.1',
   };
 }

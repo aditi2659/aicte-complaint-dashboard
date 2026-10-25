@@ -25,7 +25,8 @@ import {
   mapBackendOverlapToUi,
   mapUiReviewStatusToBackend,
   mapBackendInstitutionToUi,
-  mapUiPriorityToBackend
+  mapUiPriorityToBackend,
+  mapBackendAuditLogToUi
 } from "../src/services/adapter.ts";
 
 const BASE_URL = process.env.API_BASE_URL || "http://localhost:4000";
@@ -702,7 +703,81 @@ async function runTests() {
     }
   });
 
-  // 11. Summary
+  // 11. Audit-Log Listing API & UI Mapping
+  console.log("\n--- 11. Audit-Log Listing API & UI Mapping ---");
+
+  it("mapBackendAuditLogToUi correctly maps raw action log into UI AuditLog contract", () => {
+    const raw = {
+      id: "42",
+      complaint_id: "CMP-1001",
+      action_type: "STATUS_CHANGE",
+      action: "Status transitioned from Open to In Progress",
+      notes: "Investigation initiated",
+      actor: {
+        id: "usr-1",
+        name: "Test Officer",
+        role: "BUREAU_OFFICER",
+        email: "officer@aicte.gov.in"
+      },
+      details: { ip_address: "192.168.1.50" },
+      bureau: "Student Development Cell",
+      created_at: "2026-03-15T10:00:00.000Z"
+    };
+
+    const uiLog = mapBackendAuditLogToUi(raw);
+    assert.strictEqual(uiLog.id, "42");
+    assert.strictEqual(uiLog.entityId, "CMP-1001");
+    assert.strictEqual(uiLog.action, "STATUS_CHANGE");
+    assert.strictEqual(uiLog.user, "Test Officer");
+    assert.strictEqual(uiLog.role, "BUREAU_OFFICER");
+    assert.strictEqual(uiLog.bureau, "SDC");
+    assert.strictEqual(uiLog.details, "Investigation initiated");
+    assert.strictEqual(uiLog.ipAddress, "192.168.1.50");
+  });
+
+  await itAsync("rejects unauthenticated GET /api/v1/audit-logs (HTTP 401 AUTH_TOKEN_MISSING)", async () => {
+    const res = await request("/api/v1/audit-logs");
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual(res.body.success, false);
+    assert.strictEqual(res.body.error.code, "AUTH_TOKEN_MISSING");
+  });
+
+  await itAsync("Super Admin retrieves paginated audit logs with metadata", async () => {
+    const res = await request("/api/v1/audit-logs?page=1&limit=2", {
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.success, true);
+    assert(Array.isArray(res.body.data));
+    assert.strictEqual(res.body.data.length, 2);
+    assert.strictEqual(res.body.meta.page, 1);
+    assert.strictEqual(res.body.meta.limit, 2);
+    assert(res.body.meta.total >= 5);
+  });
+
+  await itAsync("SDC Officer receives bureau-scoped audit logs", async () => {
+    const res = await request("/api/v1/audit-logs?page=1&limit=20", {
+      headers: { Authorization: `Bearer ${sdcToken}` }
+    });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.success, true);
+    assert(res.body.data.length > 0);
+    assert(
+      res.body.data.every((l) => l.bureau === "Student Development Cell" || l.originating_bureau === "Student Development Cell"),
+      "All logs returned to SDC officer belong to Student Development Cell"
+    );
+  });
+
+  await itAsync("rejects invalid pagination parameters (HTTP 400 INVALID_INPUT)", async () => {
+    const res = await request("/api/v1/audit-logs?page=0&limit=10", {
+      headers: { Authorization: `Bearer ${adminToken}` }
+    });
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.body.success, false);
+    assert.strictEqual(res.body.error.code, "INVALID_INPUT");
+  });
+
+  // 12. Summary
   console.log("\n========================================");
   console.log(`Frontend Integration: ${passed} passed, ${failed} failed`);
   console.log("========================================\n");
