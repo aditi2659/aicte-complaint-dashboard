@@ -93,7 +93,12 @@ export async function setupTestDatabase() {
       WHERE complaint_id_a IN ('CMP-1001', 'CMP-1003');
     `);
 
-    // Reset baseline complaint statuses
+    // Remove non-baseline complaints created by tests
+    await client.query(`
+      DELETE FROM complaints WHERE complaint_id NOT IN ('CMP-1001', 'CMP-1002', 'CMP-1003', 'CMP-1004', 'CMP-1005');
+    `);
+
+    // Reset baseline complaint bureaus and statuses
     await client.query(`
       UPDATE complaints
       SET status = CASE
@@ -103,6 +108,14 @@ export async function setupTestDatabase() {
         WHEN complaint_id = 'CMP-1004' THEN 'Assigned'
         WHEN complaint_id = 'CMP-1005' THEN 'Under Review'
         ELSE status
+      END,
+      bureau = CASE
+        WHEN complaint_id = 'CMP-1001' THEN 'Student Development Cell'
+        WHEN complaint_id = 'CMP-1002' THEN 'Grievance Redressal Cell'
+        WHEN complaint_id = 'CMP-1003' THEN 'Student Development Cell'
+        WHEN complaint_id = 'CMP-1004' THEN 'Quality Assurance Cell'
+        WHEN complaint_id = 'CMP-1005' THEN 'Grievance Redressal Cell'
+        ELSE bureau
       END,
       is_escalated = FALSE
       WHERE complaint_id IN ('CMP-1001', 'CMP-1002', 'CMP-1003', 'CMP-1004', 'CMP-1005');

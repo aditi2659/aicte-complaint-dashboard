@@ -13,6 +13,7 @@ const envPath = path.resolve(__dirname, "../../../backend/.env");
 if (fs.existsSync(envPath) && typeof process.loadEnvFile === "function") {
   process.loadEnvFile(envPath);
 }
+process.env.NODE_ENV = "test";
 import {
   BUREAU_NAME_TO_CODE,
   BUREAU_CODE_TO_NAME,
