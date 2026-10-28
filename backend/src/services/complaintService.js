@@ -1,4 +1,5 @@
 import { query, getPool } from "../config/db.js";
+import { summarizeComplaint } from "../../../features/complaint-summarization/src/index.js";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -1102,4 +1103,41 @@ export async function transferComplaint(rawComplaintId, payload = {}, user) {
 
   // Return refreshed complaint dossier
   return getComplaintById(complaintId, user);
+}
+
+/**
+ * Summarizes an existing complaint using extractive local summarization and
+ * deterministic provisional category classification.
+ * Reuses getComplaintById to enforce existence and bureau-level scoping.
+ * Defaults to local provider to ensure complaint text is never sent to external AI services.
+ *
+ * @param {string} complaintId
+ * @param {Object} user - Authenticated user context
+ * @returns {Promise<Object>} Summarization data payload
+ */
+export async function summarizeComplaintById(complaintId, user) {
+  const complaint = await getComplaintById(complaintId, user);
+  if (!complaint) {
+    const error = new Error(`Complaint '${complaintId}' was not found`);
+    error.code = "COMPLAINT_NOT_FOUND";
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const description = complaint.description?.trim();
+  if (!description) {
+    const error = new Error(`Complaint '${complaintId}' has no description to summarize.`);
+    error.code = "INVALID_INPUT";
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Enforce local provider by default for zero-leak privacy
+  const provider = process.env.SUMMARIZATION_PROVIDER || "local";
+  const result = await summarizeComplaint(description, {
+    complaint_id: complaint.complaint_id || complaintId,
+    provider
+  });
+
+  return result.data;
 }

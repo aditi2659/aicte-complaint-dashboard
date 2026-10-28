@@ -9,6 +9,7 @@ router.post("/", complaintController.create);
 router.get("/:id", complaintController.getById);
 router.patch("/:id/status", complaintController.updateStatus);
 router.post("/:id/transfer", complaintController.transfer);
+router.post("/:id/summarize", complaintController.summarize);
 router.get("/:id/related", overlapController.getRelatedForComplaint);
 
 export default router;

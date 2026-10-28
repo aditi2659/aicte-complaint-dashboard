@@ -1,0 +1,16 @@
+{
+  "name": "complaint-summarization",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "verify:gemini": "node --env-file=.env scripts/live-check.js"
+  },
+  "dependencies": {
+    "@google/genai": "^2.31.0"
+  }
+}

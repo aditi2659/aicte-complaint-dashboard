@@ -1,0 +1,70 @@
+[
+  {
+    "input": {
+      "complaint_id": "CMP-1001",
+      "description": "Students report that the library computers are unavailable and the internet access is unreliable during exams."
+    },
+    "expectedResponse": {
+      "success": true,
+      "data": {
+        "complaint_id": "CMP-1001",
+        "summary": "Students report that the library computers are unavailable and the internet access is unreliable during exams.",
+        "key_issues": ["Students report that the library computers are unavailable and the internet access is unreliable during exams."],
+        "suggested_category": "Infrastructure and Facilities",
+        "suggested_category_id": null,
+        "requires_human_review": true
+      }
+    }
+  },
+  {
+    "input": {
+      "complaint_id": "CMP-1002",
+      "description": "The hall ticket is not issued on time and the exam timetable has inconsistent dates."
+    },
+    "expectedResponse": {
+      "success": true,
+      "data": {
+        "complaint_id": "CMP-1002",
+        "summary": "The hall ticket is not issued on time and the exam timetable has inconsistent dates.",
+        "key_issues": ["The hall ticket is not issued on time and the exam timetable has inconsistent dates."],
+        "suggested_category": "Examinations, Certificates and Documentation",
+        "suggested_category_id": null,
+        "requires_human_review": true
+      }
+    }
+  },
+  {
+    "input": {
+      "complaint_id": "CMP-1003",
+      "description": "The college has not distributed scholarship funds promised during admission, and students are facing delays in fee refunds."
+    },
+    "expectedResponse": {
+      "success": true,
+      "data": {
+        "complaint_id": "CMP-1003",
+        "summary": "The college has not distributed scholarship funds promised during admission, and students are facing delays in fee refunds.",
+        "key_issues": ["The college has not distributed scholarship funds promised during admission, and students are facing delays in fee refunds."],
+        "suggested_category": "Fees and Financial Issues",
+        "suggested_category_id": null,
+        "requires_human_review": true
+      }
+    }
+  },
+  {
+    "input": {
+      "complaint_id": "CMP-1004",
+      "description": "There are serious concerns."
+    },
+    "expectedResponse": {
+      "success": true,
+      "data": {
+        "complaint_id": "CMP-1004",
+        "summary": "There are serious concerns.",
+        "key_issues": ["There are serious concerns."],
+        "suggested_category": "Other",
+        "suggested_category_id": null,
+        "requires_human_review": true
+      }
+    }
+  }
+]

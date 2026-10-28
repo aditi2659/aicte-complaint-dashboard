@@ -157,3 +157,36 @@ export async function transfer(req, res, next) {
     return next(error);
   }
 }
+
+/**
+ * POST /api/v1/complaints/:id/summarize
+ */
+export async function summarize(req, res, next) {
+  try {
+    const id = req.params.id?.trim();
+    if (!id) {
+      return sendError(res, "INVALID_INPUT", "Complaint ID is required", 400);
+    }
+
+    const data = await complaintService.summarizeComplaintById(id, req.user);
+    return sendSuccess(res, data);
+  } catch (error) {
+    if (error.code === "COMPLAINT_NOT_FOUND") {
+      return sendError(res, error.code, error.message, 404);
+    }
+    if (
+      error.code === "FORBIDDEN_BUREAU_ACCESS" ||
+      error.code === "FORBIDDEN_ROLE" ||
+      error.code === "AUDITOR_READ_ONLY"
+    ) {
+      return sendError(res, error.code, error.message, 403);
+    }
+    if (error.code === "UNAUTHORIZED") {
+      return sendError(res, error.code, error.message, 401);
+    }
+    if (error.code === "INVALID_INPUT") {
+      return sendError(res, error.code, error.message, 400);
+    }
+    return next(error);
+  }
+}
