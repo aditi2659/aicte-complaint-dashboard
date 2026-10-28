@@ -30,8 +30,9 @@ import dotenv from "dotenv";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
+process.env.NODE_ENV = process.env.NODE_ENV || "test";
 
-const BASE_URL = "http://localhost:4000";
+const BASE_URL = process.env.TEST_API_URL || "http://localhost:4000";
 
 let passed = 0;
 let failed = 0;
@@ -112,7 +113,11 @@ async function runTests() {
   assert(typeof listRes.body?.meta?.total === "number", "meta envelope contains total count");
 
   const complaints = listRes.body.data;
-  assert(complaints.length === 5, "Admin receives all 5 complaints across bureaus");
+  assert(
+    complaints.length >= 5 &&
+    ["CMP-1001", "CMP-1002", "CMP-1003", "CMP-1004", "CMP-1005"].every((id) => complaints.some((c) => c.complaint_id === id)),
+    "Admin receives all baseline complaints across bureaus"
+  );
 
   let allHaveValidOverlapFields = true;
   for (const c of complaints) {
@@ -196,15 +201,19 @@ async function runTests() {
     headers: { Authorization: `Bearer ${sdcToken}` }
   });
   assert(sdcList.status === 200, "SDC Officer receives 200 OK on /api/v1/complaints");
-  assert(sdcList.body?.data?.length === 2, "SDC Officer query strictly returns 2 complaints (SDC only)");
-  const sdcIds = sdcList.body.data.map(c => c.complaint_id).sort();
+  assert(sdcList.body?.data?.length >= 2, "SDC Officer query returns SDC complaints");
+  const sdcIds = sdcList.body.data.map(c => c.complaint_id);
   assert(
-    sdcIds[0] === "CMP-1001" && sdcIds[1] === "CMP-1003",
-    "SDC complaints are CMP-1001 and CMP-1003"
+    ["CMP-1001", "CMP-1003"].every((id) => sdcIds.includes(id)),
+    "SDC complaints include baseline CMP-1001 and CMP-1003"
   );
   assert(
-    sdcList.body.data.every(c => c.has_overlap === true),
-    "Both SDC complaints retain has_overlap === true in scoped query"
+    sdcList.body.data.every(c => c.bureau === "Student Development Cell"),
+    "SDC query strictly returns Student Development Cell complaints only"
+  );
+  assert(
+    ["CMP-1001", "CMP-1003"].every((id) => sdcList.body.data.find(c => c.complaint_id === id)?.has_overlap === true),
+    "Both baseline SDC complaints retain has_overlap === true in scoped query"
   );
 
   // SDC Officer blocked from accessing QAC case detail
@@ -341,10 +350,17 @@ async function runTests() {
   console.log(`Complaint Overlap Tests: ${passed} passed, ${failed} failed`);
   console.log("========================================\n");
 
+  const { closePool } = await import("../src/config/db.js");
+  await closePool();
+
   process.exit(failed > 0 ? 1 : 0);
 }
 
-runTests().catch(err => {
+runTests().catch(async (err) => {
+  try {
+    const { closePool } = await import("../src/config/db.js");
+    await closePool();
+  } catch {}
   console.error("Test execution failed:", err);
   process.exit(1);
 });

@@ -20,8 +20,9 @@ import dotenv from "dotenv";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
+process.env.NODE_ENV = process.env.NODE_ENV || "test";
 
-const BASE_URL = "http://localhost:4000";
+const BASE_URL = process.env.TEST_API_URL || "http://localhost:4000";
 
 let passed = 0;
 let failed = 0;

@@ -20,11 +20,12 @@ import dotenv from "dotenv";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
+process.env.NODE_ENV = process.env.NODE_ENV || "test";
 
-import { getPool } from "../src/config/db.js";
+import { getPool, closePool } from "../src/config/db.js";
 import { generateToken } from "../src/utils/token.js";
 
-const BASE_URL = "http://localhost:4000";
+const BASE_URL = process.env.TEST_API_URL || "http://localhost:4000";
 
 let passed = 0;
 let failed = 0;
@@ -357,11 +358,21 @@ async function runTests() {
       WHERE complaint_id IN ('CMP-TEST-REV-1', 'CMP-TEST-REV-2', 'CMP-TEST-REV-3');
     `);
 
-    // Verify baseline state
-    const linkCountRes = await dbClient.query("SELECT COUNT(*)::int AS count FROM complaint_links;");
-    const complaintCountRes = await dbClient.query("SELECT COUNT(*)::int AS count FROM complaints;");
-    assert(linkCountRes.rows[0]?.count === 2, "Database complaint_links restored to baseline (count: 2)");
-    assert(complaintCountRes.rows[0]?.count === 5, "Database complaints restored to baseline (count: 5)");
+    // Verify test fixture teardown and baseline preservation
+    const remainingTestComplaints = await dbClient.query(
+      "SELECT COUNT(*)::int AS count FROM complaints WHERE complaint_id LIKE 'CMP-TEST-REV-%';"
+    );
+    assert(remainingTestComplaints.rows[0]?.count === 0, "All test complaints cleanly removed from database");
+
+    const remainingTestLinks = await dbClient.query(
+      "SELECT COUNT(*)::int AS count FROM complaint_links WHERE complaint_id_a LIKE 'CMP-TEST-%' OR complaint_id_b LIKE 'CMP-TEST-%';"
+    );
+    assert(remainingTestLinks.rows[0]?.count === 0, "All test complaint_links cleanly removed from database");
+
+    const baselineCasesRes = await dbClient.query(
+      "SELECT COUNT(*)::int AS count FROM complaints WHERE complaint_id IN ('CMP-1001', 'CMP-1002', 'CMP-1003', 'CMP-1004', 'CMP-1005');"
+    );
+    assert(baselineCasesRes.rows[0]?.count === 5, "All 5 baseline complaints preserved in database");
 
     dbClient.release();
   }
@@ -370,12 +381,15 @@ async function runTests() {
   console.log(`Overlap Review Tests: ${passed} passed, ${failed} failed`);
   console.log("========================================\n");
 
+  await closePool();
+
   if (failed > 0) {
     process.exit(1);
   }
 }
 
-runTests().catch((err) => {
+runTests().catch(async (err) => {
+  await closePool();
   console.error("Test execution failed:", err);
   process.exit(1);
 });

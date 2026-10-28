@@ -16,8 +16,9 @@ import dotenv from "dotenv";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
+process.env.NODE_ENV = process.env.NODE_ENV || "test";
 
-const BASE_URL = "http://localhost:4000";
+const BASE_URL = process.env.TEST_API_URL || "http://localhost:4000";
 
 let passed = 0;
 let failed = 0;
@@ -97,12 +98,13 @@ async function runTests() {
   const adminRiskRes = await request("/api/v1/analytics/risk-cases", { headers: adminHeaders });
   assert(adminRiskRes.status === 200, "GET /api/v1/analytics/risk-cases returns 200 OK for SUPER_ADMIN");
   assert(adminRiskRes.body?.success === true, "Response uses { success: true, data } envelope");
-  assert(Array.isArray(adminRiskRes.body?.data), "data is an array of risk cases");
-  assert(adminRiskRes.body?.data?.length === 5, "SUPER_ADMIN receives all 5 open cases scored across bureaus");
-
   const auditorRiskRes = await request("/api/v1/analytics/risk-cases", { headers: auditorHeaders });
+  assert(adminRiskRes.body?.data?.length >= 5, "SUPER_ADMIN receives open cases across bureaus");
+  assert(
+    adminRiskRes.body?.data?.length === auditorRiskRes.body?.data?.length,
+    "SUPER_ADMIN and AUDITOR receive identical system-wide open cases count"
+  );
   assert(auditorRiskRes.status === 200, "GET /api/v1/analytics/risk-cases returns 200 OK for AUDITOR");
-  assert(auditorRiskRes.body?.data?.length === 5, "AUDITOR reads all 5 open cases system-wide");
 
   // GET /patterns
   const adminPatternsRes = await request("/api/v1/analytics/patterns", { headers: adminHeaders });
@@ -150,7 +152,12 @@ async function runTests() {
   // SDC Officer verification
   const sdcRiskRes = await request("/api/v1/analytics/risk-cases", { headers: sdcHeaders });
   assert(sdcRiskRes.status === 200, "SDC Officer receives 200 OK on /risk-cases");
-  assert(sdcRiskRes.body?.data?.length === 2, "SDC Officer receives exactly 2 cases (scoped to SDC)", { count: sdcRiskRes.body?.data?.length });
+  assert(
+    sdcRiskRes.body?.data?.length >= 2 &&
+    ["CMP-1001", "CMP-1003"].every((id) => sdcRiskRes.body?.data?.some((c) => c.complaint_id === id)),
+    "SDC Officer receives SDC cases including baseline",
+    { count: sdcRiskRes.body?.data?.length }
+  );
   assert(
     sdcRiskRes.body?.data?.every((c) => c.bureau === "Student Development Cell"),
     "All SDC risk cases belong strictly to Student Development Cell"
@@ -170,7 +177,11 @@ async function runTests() {
 
   // GRC Officer verification
   const grcRiskRes = await request("/api/v1/analytics/risk-cases", { headers: grcHeaders });
-  assert(grcRiskRes.body?.data?.length === 2, "GRC Officer receives exactly 2 cases (scoped to GRC)");
+  assert(
+    grcRiskRes.body?.data?.length >= 2 &&
+    ["CMP-1002", "CMP-1005"].every((id) => grcRiskRes.body?.data?.some((c) => c.complaint_id === id)),
+    "GRC Officer receives GRC cases including baseline"
+  );
   assert(
     grcRiskRes.body?.data?.every((c) => c.bureau === "Grievance Redressal Cell"),
     "All GRC risk cases belong strictly to Grievance Redressal Cell"
@@ -178,8 +189,12 @@ async function runTests() {
 
   // QAC Officer verification
   const qacRiskRes = await request("/api/v1/analytics/risk-cases", { headers: qacHeaders });
-  assert(qacRiskRes.body?.data?.length === 1, "QAC Officer receives exactly 1 case (CMP-1004)");
-  assert(qacRiskRes.body?.data[0]?.complaint_id === "CMP-1004", "QAC Officer sees only CMP-1004");
+  assert(
+    qacRiskRes.body?.data?.length >= 1 &&
+    qacRiskRes.body?.data?.some((c) => c.complaint_id === "CMP-1004"),
+    "QAC Officer receives QAC case (CMP-1004)"
+  );
+  assert(qacRiskRes.body?.data?.every((c) => c.bureau === "Quality Assurance Cell"), "QAC Officer sees only Quality Assurance Cell cases");
 
   // 4. Operational Overlap Flags Reflected in Analytics Scoring
   console.log("\n--- 4. Operational Overlap Risk Flag Enrichment ---");

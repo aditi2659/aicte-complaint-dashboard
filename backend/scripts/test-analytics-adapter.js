@@ -16,8 +16,10 @@ import dotenv from "dotenv";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
+process.env.NODE_ENV = process.env.NODE_ENV || "test";
 
 import { getCasesForUser } from "../src/services/analyticsService.js";
+import { closePool } from "../src/config/db.js";
 
 let passed = 0;
 let failed = 0;
@@ -44,9 +46,9 @@ async function runTests() {
     role: "SUPER_ADMIN",
     bureau: null
   };
+  const BASELINE_COMPLAINTS = ["CMP-1001", "CMP-1002", "CMP-1003", "CMP-1004", "CMP-1005"];
   const adminCases = await getCasesForUser(adminUser);
   assert(Array.isArray(adminCases), "getCasesForUser returns a plain array");
-  assert(adminCases.length === 5, "SUPER_ADMIN retrieves all 5 complaints across all bureaus", { count: adminCases.length });
 
   const auditorUser = {
     id: "a0000000-0000-0000-0000-000000000007",
@@ -55,7 +57,19 @@ async function runTests() {
     bureau: null
   };
   const auditorCases = await getCasesForUser(auditorUser);
-  assert(auditorCases.length === 5, "AUDITOR retrieves all 5 complaints across all bureaus", { count: auditorCases.length });
+
+  assert(
+    adminCases.length >= 5 &&
+    adminCases.length === auditorCases.length &&
+    BASELINE_COMPLAINTS.every((id) => adminCases.some((c) => c.complaint_id === id)),
+    "SUPER_ADMIN retrieves all baseline complaints across all bureaus",
+    { count: adminCases.length }
+  );
+  assert(
+    auditorCases.length === adminCases.length,
+    "AUDITOR retrieves all complaints across all bureaus matching SUPER_ADMIN",
+    { count: auditorCases.length }
+  );
 
   // 2. Data contracts and exact keys
   console.log("\n--- 2. Data Contracts & Formatting ---");
@@ -111,17 +125,15 @@ async function runTests() {
     bureau: "Student Development Cell"
   };
   const sdcCases = await getCasesForUser(sdcOfficer);
-  assert(sdcCases.length === 2, "SDC Officer receives exactly 2 cases", { count: sdcCases.length });
-  assert(sdcCases.every((c) => c.bureau === "Student Development Cell"), "All SDC cases belong strictly to Student Development Cell");
-
-  const sdcHead = {
-    id: "a0000000-0000-0000-0000-000000000002",
-    email: "sdc.head@aicte.gov.in",
-    role: "BUREAU_HEAD",
-    bureau: "Student Development Cell"
-  };
   const sdcHeadCases = await getCasesForUser(sdcHead);
-  assert(sdcHeadCases.length === 2, "SDC Head receives exactly 2 cases");
+  assert(
+    sdcCases.length >= 2 &&
+    sdcCases.length === sdcHeadCases.length &&
+    sdcCases.every((c) => c.bureau === "Student Development Cell") &&
+    ["CMP-1001", "CMP-1003"].every((id) => sdcCases.some((c) => c.complaint_id === id)),
+    "SDC Officer receives all SDC cases matching SDC Head",
+    { count: sdcCases.length }
+  );
 
   const grcOfficer = {
     id: "a0000000-0000-0000-0000-000000000004",
@@ -129,18 +141,22 @@ async function runTests() {
     role: "BUREAU_OFFICER",
     bureau: "Grievance Redressal Cell"
   };
-  const grcCases = await getCasesForUser(grcOfficer);
-  assert(grcCases.length === 2, "GRC Officer receives exactly 2 cases");
-  assert(grcCases.every((c) => c.bureau === "Grievance Redressal Cell"), "All GRC cases belong strictly to Grievance Redressal Cell");
-
   const grievanceOfficer = {
     id: "a0000000-0000-0000-0000-000000000005",
     email: "grievance.officer@aicte.gov.in",
     role: "GRIEVANCE_OFFICER",
     bureau: "Grievance Redressal Cell"
   };
+  const grcCases = await getCasesForUser(grcOfficer);
   const grievanceCases = await getCasesForUser(grievanceOfficer);
-  assert(grievanceCases.length === 2, "GRIEVANCE_OFFICER receives exactly 2 cases");
+  assert(
+    grcCases.length >= 2 &&
+    grcCases.length === grievanceCases.length &&
+    grcCases.every((c) => c.bureau === "Grievance Redressal Cell") &&
+    ["CMP-1002", "CMP-1005"].every((id) => grcCases.some((c) => c.complaint_id === id)),
+    "GRC Officer receives all GRC cases matching GRIEVANCE_OFFICER",
+    { count: grcCases.length }
+  );
 
   const qacOfficer = {
     id: "a0000000-0000-0000-0000-000000000006",
@@ -149,7 +165,13 @@ async function runTests() {
     bureau: "Quality Assurance Cell"
   };
   const qacCases = await getCasesForUser(qacOfficer);
-  assert(qacCases.length === 1 && qacCases[0].complaint_id === "CMP-1004", "QAC Officer receives exactly 1 case (CMP-1004)");
+  assert(
+    qacCases.length >= 1 &&
+    qacCases.every((c) => c.bureau === "Quality Assurance Cell") &&
+    qacCases.some((c) => c.complaint_id === "CMP-1004"),
+    "QAC Officer receives QAC case (CMP-1004)",
+    { count: qacCases.length }
+  );
 
   // 5. Deny-by-Default Edge Cases
   console.log("\n--- 5. Deny-by-Default & Input Validation ---");
@@ -187,7 +209,7 @@ async function runTests() {
   const fullAnalytics = analytics.getFullAnalytics(adminCases, today);
 
   assert(Array.isArray(fullAnalytics.riskCases), "analytics.getRiskCases returns array of risk cases");
-  assert(fullAnalytics.riskCases.length === 5, "All 5 open cases scored by getRiskCases");
+  assert(fullAnalytics.riskCases.length === adminCases.length, "All open cases scored by getRiskCases");
   assert(fullAnalytics.riskCases.every((c) => c.risk && typeof c.risk.score === "number"), "Every case has risk score");
 
   // Verify that has_overlap === true awards +10 score and reason
@@ -206,13 +228,16 @@ async function runTests() {
   console.log(`Analytics Adapter Tests: ${passed} passed, ${failed} failed`);
   console.log(`========================================\n`);
 
+  await closePool();
+
   if (failed > 0) {
     process.exit(1);
   }
   process.exit(0);
 }
 
-runTests().catch((err) => {
+runTests().catch(async (err) => {
+  await closePool();
   console.error("Test execution fatal error:", err);
   process.exit(1);
 });

@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
+    "build": "npm --prefix ../frontend/frontend-ui run build",
     "migrate": "node scripts/migrate.js",
     "seed": "node scripts/seed.js",
     "bootstrap:auth": "node scripts/bootstrap-auth.js",
+    "setup:test:db": "node scripts/setup-test-db.js",
     "test:phase3": "node scripts/test-phase3.js",
     "test:phase4": "node scripts/test-phase4.js",
     "test:phase5": "node scripts/test-phase5.js",
