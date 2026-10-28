@@ -1,20 +1,30 @@
-import { 
-  Complaint, 
-  Institution, 
-  OverlapMatch, 
-  AuditLog, 
-  ComplaintStatus, 
-  BureauCode, 
-  OverlapReviewStatus 
-} from '../types';
+import type {
+  Complaint,
+  Institution,
+  OverlapMatch,
+  AuditLog,
+  ComplaintStatus,
+  BureauCode,
+  OverlapReviewStatus,
+  SystemUser,
+  AnalyticsRiskCase,
+  AnalyticsPatterns,
+  AnalyticsPriorityCase,
+  AnalyticsAlert
+} from '../types/index.ts';
+import {
+  mapBackendComplaintToUi,
+  mapBackendOverlapToUi,
+  mapBackendInstitutionToUi,
+  mapUiReviewStatusToBackend,
+  mapUiPriorityToBackend,
+  mapUiStatusToBackend,
+  mapBackendAuditLogToUi,
+  BUREAU_CODE_TO_NAME
+} from './adapter.ts';
 
-/**
- * AICTE Integrated Institution Complaint Monitoring & Status Portal API Service
- * 
- * Provides an abstracted service layer that models RESTful endpoints.
- * Currently backed by in-memory/localStorage state provider.
- * Can be switched to `fetch('/api/v1/...')` when connected to Express + PostgreSQL backend.
- */
+export const AUTH_TOKEN_KEY = 'aicte_auth_token';
+export const AUTH_USER_KEY = 'aicte_auth_user';
 
 export interface ApiResponse<T> {
   success: boolean;
@@ -37,82 +47,446 @@ export interface ComplaintFilterParams {
   limit?: number;
 }
 
+export interface LoginResult {
+  token: string;
+  user: {
+    id: string;
+    full_name: string;
+    email: string;
+    role: string;
+    bureau: string | null;
+  };
+}
+
+export const DEMO_CREDENTIALS = [
+  {
+    email: 'admin@aicte.gov.in',
+    password: 'AICTE_Admin_9aF8c3e210b48d7120',
+    name: 'AICTE Central Administrator',
+    role: 'SUPER_ADMIN' as const,
+    bureau: 'RB' as BureauCode,
+  },
+  {
+    email: 'sdc.head@aicte.gov.in',
+    password: 'AICTE_Staff_7bE6d4c120f39a8231',
+    name: 'Student Development Bureau Head',
+    role: 'BUREAU_HEAD' as const,
+    bureau: 'SDC' as BureauCode,
+  },
+  {
+    email: 'sdc.officer@aicte.gov.in',
+    password: 'AICTE_Staff_7bE6d4c120f39a8231',
+    name: 'Student Development Cell Officer',
+    role: 'COMPLAINT_OFFICER' as const,
+    bureau: 'SDC' as BureauCode,
+  },
+  {
+    email: 'grc.officer@aicte.gov.in',
+    password: 'AICTE_Staff_7bE6d4c120f39a8231',
+    name: 'Grievance Redressal Officer',
+    role: 'COMPLAINT_OFFICER' as const,
+    bureau: 'PGRC' as BureauCode,
+  },
+  {
+    email: 'grievance.officer@aicte.gov.in',
+    password: 'AICTE_Staff_7bE6d4c120f39a8231',
+    name: 'Central Grievance Redressal Officer',
+    role: 'PGRC_MEMBER' as const,
+    bureau: 'PGRC' as BureauCode,
+  },
+  {
+    email: 'qac.officer@aicte.gov.in',
+    password: 'AICTE_Staff_7bE6d4c120f39a8231',
+    name: 'Quality Assurance Officer',
+    role: 'COMPLAINT_OFFICER' as const,
+    bureau: 'RB' as BureauCode,
+  },
+  {
+    email: 'auditor@aicte.gov.in',
+    password: 'AICTE_Staff_7bE6d4c120f39a8231',
+    name: 'Central Compliance Auditor',
+    role: 'AUDITOR' as const,
+    bureau: 'RB' as BureauCode,
+  },
+];
+
+let unauthorizedListeners: Array<() => void> = [];
+
+export const authService = {
+  getToken(): string | null {
+    try {
+      return sessionStorage.getItem(AUTH_TOKEN_KEY);
+    } catch {
+      return null;
+    }
+  },
+
+  getStoredUser(): SystemUser | null {
+    try {
+      const data = sessionStorage.getItem(AUTH_USER_KEY);
+      return data ? JSON.parse(data) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  setSession(token: string, user: SystemUser): void {
+    try {
+      sessionStorage.setItem(AUTH_TOKEN_KEY, token);
+      sessionStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+    } catch (e) {
+      console.error('Failed to save session:', e);
+    }
+  },
+
+  clearSession(): void {
+    try {
+      sessionStorage.removeItem(AUTH_TOKEN_KEY);
+      sessionStorage.removeItem(AUTH_USER_KEY);
+    } catch (e) {
+      console.error('Failed to clear session:', e);
+    }
+  },
+
+  onUnauthorized(cb: () => void): () => void {
+    unauthorizedListeners.push(cb);
+    return () => {
+      unauthorizedListeners = unauthorizedListeners.filter(l => l !== cb);
+    };
+  },
+
+  async login(email: string, password: string): Promise<LoginResult> {
+    const res = await fetch('/api/v1/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.trim(), password }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.success) {
+      const code = json?.error?.code || 'AUTH_FAILED';
+      const msg = json?.error?.message || `Login failed with status ${res.status}`;
+      const err = new Error(msg);
+      (err as any).code = code;
+      (err as any).status = res.status;
+      throw err;
+    }
+
+    return json.data;
+  },
+};
+
+/**
+ * Common fetch helper that automatically attaches Bearer tokens
+ * and dispatches 401 unauthenticated notifications.
+ */
+export async function apiRequest<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const token = authService.getToken();
+  const headers = new Headers(options.headers || {});
+
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  const res = await fetch(endpoint, {
+    ...options,
+    headers,
+  });
+
+  if (res.status === 401) {
+    authService.clearSession();
+    unauthorizedListeners.forEach(listener => {
+      try { listener(); } catch {}
+    });
+    const err = new Error('Session expired or authentication missing. Please log in.');
+    (err as any).code = 'UNAUTHORIZED';
+    (err as any).status = 401;
+    throw err;
+  }
+
+  const json = await res.json().catch(() => ({}));
+
+  if (!res.ok || json.success === false) {
+    const code = json?.error?.code || 'API_ERROR';
+    const message = json?.error?.message || `Request failed with HTTP ${res.status}`;
+    const error = new Error(message);
+    (error as any).code = code;
+    (error as any).status = res.status;
+    (error as any).details = json?.error?.details;
+    throw error;
+  }
+
+  return json;
+}
+
 export const ComplaintApiService = {
-  // Complaints API
-  async getComplaints(_params?: ComplaintFilterParams): Promise<ApiResponse<Complaint[]>> {
-    // In production: return (await fetch(`/api/v1/complaints?${new URLSearchParams(params as any)}`)).json();
+  /**
+   * Fetch authenticated complaints list from backend /api/v1/complaints
+   */
+  async getComplaints(params?: ComplaintFilterParams): Promise<ApiResponse<Complaint[]>> {
+    const query = new URLSearchParams();
+    if (params?.bureau) {
+      const fullName = BUREAU_CODE_TO_NAME[params.bureau];
+      if (fullName) query.set('bureau', fullName);
+    }
+    if (params?.status) {
+      query.set('status', params.status);
+    }
+    if (params?.page) query.set('page', String(params.page));
+    if (params?.limit) query.set('limit', String(params.limit));
+
+    const qs = query.toString();
+    const endpoint = `/api/v1/complaints${qs ? `?${qs}` : ''}`;
+    const res = await apiRequest<{ success: boolean; data: any[]; meta?: any }>(endpoint);
+
+    const complaints = (res.data || []).map(mapBackendComplaintToUi);
+
     return {
       success: true,
-      data: [],
+      data: complaints,
       timestamp: new Date().toISOString(),
     };
   },
 
+  /**
+   * Fetch detailed complaint case including nested institution and audit history
+   */
   async getComplaintById(id: string): Promise<ApiResponse<Complaint | null>> {
-    // In production: return (await fetch(`/api/v1/complaints/${id}`)).json();
+    const endpoint = `/api/v1/complaints/${encodeURIComponent(id)}`;
+    const res = await apiRequest<{ success: boolean; data: any }>(endpoint);
+
+    if (!res.data) {
+      return {
+        success: true,
+        data: null,
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    const complaint = mapBackendComplaintToUi(res.data);
     return {
       success: true,
-      data: null,
+      data: complaint,
       timestamp: new Date().toISOString(),
     };
   },
 
-  async createComplaint(payload: Partial<Complaint>): Promise<ApiResponse<Complaint>> {
-    // In production: return (await fetch('/api/v1/complaints', { method: 'POST', body: JSON.stringify(payload) })).json();
+  /**
+   * Fetch real cross-bureau overlap suggestions
+   */
+  async getOverlaps(): Promise<ApiResponse<OverlapMatch[]>> {
+    const res = await apiRequest<{ success: boolean; data: any[] }>('/api/v1/overlaps');
+    const overlaps = (res.data || []).map(mapBackendOverlapToUi);
+
     return {
       success: true,
-      data: payload as Complaint,
-      message: 'Complaint registered successfully in AICTE Central Ingestion Gateway.',
+      data: overlaps,
       timestamp: new Date().toISOString(),
     };
   },
 
-  async updateStatus(id: string, status: ComplaintStatus, remarks: string): Promise<ApiResponse<{ id: string; status: ComplaintStatus }>> {
-    // In production: return (await fetch(`/api/v1/complaints/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status, remarks }) })).json();
-    return {
-      success: true,
-      data: { id, status },
-      message: `Status updated to ${status}.`,
-      timestamp: new Date().toISOString(),
-    };
-  },
+  /**
+   * Review an overlap candidate (Confirmed or Dismissed) using authorized review API
+   */
+  async reviewOverlap(id: string, reviewStatus: OverlapReviewStatus, notes: string): Promise<ApiResponse<OverlapMatch>> {
+    const backendStatus = mapUiReviewStatusToBackend(reviewStatus);
+    const endpoint = `/api/v1/overlaps/${encodeURIComponent(id)}/review`;
 
-  async transferBureau(id: string, targetBureau: BureauCode, reason: string, remarks: string): Promise<ApiResponse<{ id: string; targetBureau: BureauCode }>> {
-    // In production: return (await fetch(`/api/v1/complaints/${id}/transfer`, { method: 'POST', body: JSON.stringify({ targetBureau, reason, remarks }) })).json();
-    return {
-      success: true,
-      data: { id, targetBureau },
-      message: `Case transferred to Bureau ${targetBureau}.`,
-      timestamp: new Date().toISOString(),
-    };
-  },
+    const res = await apiRequest<{ success: boolean; data: any }>(endpoint, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        review_status: backendStatus,
+        review_notes: notes ? notes.trim() : null,
+      }),
+    });
 
-  async reviewOverlap(id: string, reviewStatus: OverlapReviewStatus, notes: string): Promise<ApiResponse<{ id: string; reviewStatus: OverlapReviewStatus }>> {
-    // In production: return (await fetch(`/api/v1/overlaps/${id}/review`, { method: 'POST', body: JSON.stringify({ reviewStatus, notes }) })).json();
+    const mapped = mapBackendOverlapToUi(res.data);
+
     return {
       success: true,
-      data: { id, reviewStatus },
+      data: mapped,
       message: `Overlap reviewed and recorded as ${reviewStatus}.`,
       timestamp: new Date().toISOString(),
     };
   },
 
-  // Institutions API
-  async getInstitutions(): Promise<ApiResponse<Institution[]>> {
-    // In production: return (await fetch('/api/v1/institutions')).json();
+  /**
+   * Fetch master institutions list
+   */
+  async getInstitutions(existingComplaints: Complaint[] = []): Promise<ApiResponse<Institution[]>> {
+    const res = await apiRequest<{ success: boolean; data: any[] }>('/api/v1/institutions');
+    const institutions = (res.data || []).map(inst => mapBackendInstitutionToUi(inst, existingComplaints));
+
     return {
       success: true,
-      data: [],
+      data: institutions,
       timestamp: new Date().toISOString(),
     };
   },
 
-  // Audit Logs API
-  async getAuditLogs(): Promise<ApiResponse<AuditLog[]>> {
-    // In production: return (await fetch('/api/v1/audit-logs')).json();
+  /**
+   * Fetch system-wide dashboard summary metrics
+   */
+  async getDashboardSummary(): Promise<ApiResponse<any>> {
+    const res = await apiRequest<{ success: boolean; data: any }>('/api/v1/dashboard/summary');
     return {
       success: true,
-      data: [],
+      data: res.data,
+      timestamp: new Date().toISOString(),
+    };
+  },
+
+  /**
+   * Fetch live risk assessment cases from backend /api/v1/analytics/risk-cases
+   */
+  async getRiskCases(): Promise<ApiResponse<AnalyticsRiskCase[]>> {
+    const res = await apiRequest<{ success: boolean; data: AnalyticsRiskCase[] }>('/api/v1/analytics/risk-cases');
+    return {
+      success: true,
+      data: res.data || [],
+      timestamp: new Date().toISOString(),
+    };
+  },
+
+  /**
+   * Fetch live pattern detection from backend /api/v1/analytics/patterns
+   */
+  async getPatterns(): Promise<ApiResponse<AnalyticsPatterns>> {
+    const res = await apiRequest<{ success: boolean; data: AnalyticsPatterns }>('/api/v1/analytics/patterns');
+    return {
+      success: true,
+      data: res.data || { repeatedCategories: [], risingCategories: [], busyRegions: [] },
+      timestamp: new Date().toISOString(),
+    };
+  },
+
+  /**
+   * Fetch prioritized attention case list from backend /api/v1/analytics/priority-list
+   * Supports optional limit parameter (defaults to 10)
+   */
+  async getPriorityList(limit: number = 10): Promise<ApiResponse<AnalyticsPriorityCase[]>> {
+    const res = await apiRequest<{ success: boolean; data: AnalyticsPriorityCase[] }>(
+      `/api/v1/analytics/priority-list?limit=${encodeURIComponent(limit)}`
+    );
+    return {
+      success: true,
+      data: res.data || [],
+      timestamp: new Date().toISOString(),
+    };
+  },
+
+  /**
+   * Fetch active early-warning alerts from backend /api/v1/analytics/alerts
+   */
+  async getAlerts(): Promise<ApiResponse<AnalyticsAlert[]>> {
+    const res = await apiRequest<{ success: boolean; data: AnalyticsAlert[] }>('/api/v1/analytics/alerts');
+    return {
+      success: true,
+      data: res.data || [],
+      timestamp: new Date().toISOString(),
+    };
+  },
+
+  /**
+   * Register a new complaint in PostgreSQL via backend POST /api/v1/complaints
+   */
+  async createComplaint(payload: Partial<Complaint>): Promise<ApiResponse<Complaint>> {
+    const rawBureau = (payload.currentBureau || (payload as any).bureau) as BureauCode | undefined;
+    const bureauName = rawBureau && BUREAU_CODE_TO_NAME[rawBureau] ? BUREAU_CODE_TO_NAME[rawBureau] : rawBureau;
+
+    const requestBody = {
+      institution_id: payload.institutionId,
+      title: payload.subject,
+      category: payload.categoryLabel || payload.category,
+      description: payload.description,
+      bureau: bureauName,
+      priority: payload.priority ? mapUiPriorityToBackend(payload.priority) : 'Medium',
+      complainant_type: payload.complainantType,
+      lodging_channel: payload.lodgingChannel
+    };
+
+    const res = await apiRequest<{ success: boolean; data: any }>('/api/v1/complaints', {
+      method: 'POST',
+      body: JSON.stringify(requestBody),
+    });
+
+    const mapped = mapBackendComplaintToUi(res.data);
+
+    return {
+      success: true,
+      data: mapped,
+      message: `Complaint ${mapped.caseNumber || mapped.id} registered successfully.`,
+      timestamp: new Date().toISOString(),
+    };
+  },
+
+  /**
+   * Update complaint regulatory status in PostgreSQL via PATCH /api/v1/complaints/:id/status
+   */
+  async updateStatus(id: string, status: ComplaintStatus, remarks: string): Promise<ApiResponse<Complaint>> {
+    const backendStatus = mapUiStatusToBackend(status);
+    const endpoint = `/api/v1/complaints/${encodeURIComponent(id)}/status`;
+
+    const res = await apiRequest<{ success: boolean; data: any }>(endpoint, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        status: backendStatus,
+        remarks: remarks ? remarks.trim() : '',
+      }),
+    });
+
+    const mapped = mapBackendComplaintToUi(res.data);
+
+    return {
+      success: true,
+      data: mapped,
+      message: `Status updated to ${status}.`,
+      timestamp: new Date().toISOString(),
+    };
+  },
+
+  /**
+   * Transfer complaint custody to another AICTE bureau via POST /api/v1/complaints/:id/transfer
+   */
+  async transferBureau(
+    id: string,
+    targetBureau: BureauCode,
+    reason: string,
+    remarks?: string
+  ): Promise<ApiResponse<Complaint>> {
+    const backendBureau = BUREAU_CODE_TO_NAME[targetBureau] || targetBureau;
+    const endpoint = `/api/v1/complaints/${encodeURIComponent(id)}/transfer`;
+
+    const res = await apiRequest<{ success: boolean; data: any }>(endpoint, {
+      method: 'POST',
+      body: JSON.stringify({
+        destination_bureau: backendBureau,
+        reason: reason ? reason.trim() : '',
+        remarks: remarks ? remarks.trim() : '',
+      }),
+    });
+
+    const mapped = mapBackendComplaintToUi(res.data);
+
+    return {
+      success: true,
+      data: mapped,
+      message: `Case successfully transferred to ${targetBureau}.`,
+      timestamp: new Date().toISOString(),
+    };
+  },
+
+  async getAuditLogs(page = 1, limit = 50): Promise<ApiResponse<AuditLog[]>> {
+    const endpoint = `/api/v1/audit-logs?page=${page}&limit=${limit}`;
+    const res = await apiRequest<{ success: boolean; data: any[]; meta?: any }>(endpoint);
+    const logs = (res.data || []).map(mapBackendAuditLogToUi);
+
+    return {
+      success: true,
+      data: logs,
       timestamp: new Date().toISOString(),
     };
   },

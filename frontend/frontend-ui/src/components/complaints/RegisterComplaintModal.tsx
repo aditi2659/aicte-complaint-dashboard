@@ -25,8 +25,10 @@ export const RegisterComplaintModal: React.FC<RegisterComplaintModalProps> = ({
   const [subject, setSubject] = useState('');
   const [description, setDescription] = useState('');
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!subject.trim()) {
       setError('Please provide a complaint subject.');
@@ -50,19 +52,32 @@ export const RegisterComplaintModal: React.FC<RegisterComplaintModalProps> = ({
       SEXUAL_HARASSMENT_ICC: 'Gender Harassment / POSH Committee Violation',
     };
 
-    addComplaint({
-      institutionId,
-      currentBureau: bureau,
-      category,
-      categoryLabel: categoryLabels[category],
-      complainantType,
-      lodgingChannel,
-      priority,
-      subject,
-      description,
-    });
+    setLoading(true);
+    setError('');
+    setSuccessMessage('');
 
-    onClose();
+    try {
+      const created = await addComplaint({
+        institutionId,
+        currentBureau: bureau,
+        category,
+        categoryLabel: categoryLabels[category],
+        complainantType,
+        lodgingChannel,
+        priority,
+        subject: subject.trim(),
+        description: description.trim(),
+      });
+
+      setSuccessMessage(`Complaint ${created.caseNumber || created.id} registered successfully.`);
+      setTimeout(() => {
+        onClose();
+      }, 1000);
+    } catch (err: any) {
+      setError(err.message || 'Failed to register complaint. Please check your permissions and try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -78,6 +93,11 @@ export const RegisterComplaintModal: React.FC<RegisterComplaintModalProps> = ({
         {error && (
           <div className="p-3 bg-[#FF5C5C]/15 border border-[#FF5C5C]/40 text-[#FF6B6B] font-mono">
             {error}
+          </div>
+        )}
+        {successMessage && (
+          <div className="p-3 bg-[#C4F279]/15 border border-[#C4F279]/40 text-[#C4F279] font-mono">
+            {successMessage}
           </div>
         )}
 
@@ -213,15 +233,17 @@ export const RegisterComplaintModal: React.FC<RegisterComplaintModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 border border-[#35473A] bg-[#222F25] text-[#A6B7A8] hover:text-[#E6EFE5] hover:bg-[#27362B] transition-colors"
+            disabled={loading}
+            className="px-4 py-2 border border-[#35473A] bg-[#222F25] text-[#A6B7A8] hover:text-[#E6EFE5] hover:bg-[#27362B] transition-colors disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             type="submit"
-            className="px-5 py-2 bg-[#C4F279] hover:bg-[#B2E560] text-[#101713] font-bold font-mono transition-colors shadow-xs"
+            disabled={loading}
+            className="px-5 py-2 bg-[#C4F279] hover:bg-[#B2E560] text-[#101713] font-bold font-mono transition-colors shadow-xs disabled:opacity-50"
           >
-            Submit & Generate Case ID
+            {loading ? 'Submitting & Ingesting...' : 'Submit & Generate Case ID'}
           </button>
         </div>
       </form>

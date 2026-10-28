@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 import express from "express";
@@ -77,6 +78,18 @@ app.get("/api/complaints/related", authenticate, async (req, res, next) => {
 
 // Mount Phase 3 & 4 v1 REST API
 app.use("/api/v1", v1Router);
+
+// Serve production frontend assets if available
+const frontendDist = path.resolve(__dirname, "../../frontend/frontend-ui/dist");
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api")) {
+      return next();
+    }
+    return res.sendFile(path.join(frontendDist, "index.html"));
+  });
+}
 
 // Catch-all 404 for undefined routes
 app.use(notFoundHandler);

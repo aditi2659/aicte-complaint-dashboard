@@ -6,13 +6,24 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
+    "build": "npm --prefix ../frontend/frontend-ui run build",
     "migrate": "node scripts/migrate.js",
     "seed": "node scripts/seed.js",
     "bootstrap:auth": "node scripts/bootstrap-auth.js",
+    "setup:test:db": "node scripts/setup-test-db.js",
     "test:phase3": "node scripts/test-phase3.js",
     "test:phase4": "node scripts/test-phase4.js",
     "test:phase5": "node scripts/test-phase5.js",
-    "test": "node scripts/test-phase3.js && node scripts/test-phase4.js && node scripts/test-phase5.js"
+    "test:analytics:adapter": "node scripts/test-analytics-adapter.js",
+    "test:analytics:routes": "node scripts/test-analytics-routes.js",
+    "test:overlap": "node scripts/test-complaint-overlap.js && node scripts/test-overlap-review.js",
+    "test:overlap:review": "node scripts/test-overlap-review.js",
+    "test:registration": "node scripts/test-complaint-registration.js",
+    "test:status": "node scripts/test-complaint-status.js",
+    "test:transfer": "node scripts/test-complaint-transfer.js",
+    "test:audit": "node scripts/test-audit-logs.js",
+    "test:summarize": "node scripts/test-complaint-summarize.js",
+    "test": "node scripts/test-phase3.js && node scripts/test-phase4.js && node scripts/test-phase5.js && node scripts/test-analytics-adapter.js && node scripts/test-analytics-routes.js && node scripts/test-complaint-overlap.js && node scripts/test-overlap-review.js && node scripts/test-complaint-registration.js && node scripts/test-complaint-status.js && node scripts/test-complaint-transfer.js && node scripts/test-audit-logs.js && node scripts/test-complaint-summarize.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

@@ -53,3 +53,59 @@ export async function getRelatedForComplaint(req, res, next) {
     return next(error);
   }
 }
+
+/**
+ * PATCH /api/v1/overlaps/:id/review
+ * POST /api/v1/overlaps/:id/review
+ * PATCH /api/v1/overlaps/:id
+ */
+export async function review(req, res, next) {
+  try {
+    const rawId = req.params.id?.trim();
+    const linkId = parseInt(rawId, 10);
+    if (!rawId || Number.isNaN(linkId) || linkId <= 0) {
+      return sendError(res, "INVALID_INPUT", "A valid numeric overlap link ID is required", 400);
+    }
+
+    const { review_status, review_notes, notes } = req.body || {};
+    const normalizedStatus = review_status ? String(review_status).trim() : undefined;
+
+    if (!normalizedStatus || (normalizedStatus !== "Confirmed" && normalizedStatus !== "Dismissed")) {
+      return sendError(
+        res,
+        "INVALID_INPUT",
+        "Field 'review_status' must be either 'Confirmed' or 'Dismissed'",
+        400
+      );
+    }
+
+    const reviewNotes = (review_notes !== undefined ? review_notes : notes)
+      ? String(review_notes !== undefined ? review_notes : notes).trim()
+      : null;
+
+    const result = await overlapService.reviewOverlap(
+      linkId,
+      { review_status: normalizedStatus, review_notes: reviewNotes },
+      req.user
+    );
+
+    return sendSuccess(res, result);
+  } catch (error) {
+    if (error.code === "OVERLAP_NOT_FOUND") {
+      return sendError(res, error.code, error.message, 404);
+    }
+    if (error.code === "INVALID_STATUS_TRANSITION") {
+      return sendError(res, error.code, error.message, 409);
+    }
+    if (error.code === "FORBIDDEN_BUREAU_ACCESS") {
+      return sendError(res, error.code, error.message, 403);
+    }
+    if (error.code === "AUDITOR_READ_ONLY") {
+      return sendError(res, error.code, error.message, 403);
+    }
+    if (error.code === "INVALID_INPUT") {
+      return sendError(res, error.code, error.message, 400);
+    }
+    return next(error);
+  }
+}

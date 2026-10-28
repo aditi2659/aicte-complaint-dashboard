@@ -18,17 +18,57 @@ import {
   PlusCircle,
   ExternalLink,
   TrendingUp,
+  AlertTriangle,
   Activity,
 } from 'lucide-react';
 
 export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
-  const { getStats } = useComplaints();
+  const { getStats, analyticsAlerts } = useComplaints();
   const stats = getStats();
   const [showRegisterModal, setShowRegisterModal] = useState(false);
 
   return (
     <div className="mx-auto max-w-[1600px] space-y-7 bg-black px-1 pb-12 text-[#F5F5F5] sm:px-2">
+      {/* Predictive Analytics Early-Warning Alert */}
+      {analyticsAlerts && analyticsAlerts.length > 0 && (
+        <section
+          className="relative flex flex-col items-start justify-between gap-4 overflow-hidden border border-[#E5A93C]/35 bg-[#E5A93C]/[0.06] p-4 sm:flex-row sm:items-center sm:p-5"
+          aria-label="Predictive early-warning alerts"
+        >
+          <span className="absolute right-0 top-0 h-2 w-2 bg-[#E5A93C]" />
+
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="shrink-0 border border-[#E5A93C]/40 bg-[#E5A93C]/10 p-3 text-[#E5A93C]">
+              <AlertTriangle size={21} />
+            </div>
+
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-sm font-semibold tracking-tight text-[#F5F5F5]">
+                  {analyticsAlerts.length} Predictive Early-Warning Alert{analyticsAlerts.length === 1 ? '' : 's'} Active
+                </h3>
+                <span className="border border-[#E5A93C]/40 bg-[#E5A93C]/10 px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wide text-[#E5A93C]">
+                  Action recommended
+                </span>
+              </div>
+
+              <p className="mt-1 max-w-4xl text-xs leading-5 text-[#A3A3A3]">
+                AICTE predictive analytics engine identified {analyticsAlerts.length} case{analyticsAlerts.length === 1 ? '' : 's'} with crossed deadlines, approaching SLA limits, or prolonged inactivity.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => navigate('/reports')}
+            className="inline-flex shrink-0 items-center gap-2 bg-[#E5A93C] px-4 py-3 font-mono text-xs font-bold text-black transition-colors hover:bg-[#F3B84C] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#E5A93C]"
+          >
+            Inspect priority list
+            <ExternalLink size={14} />
+          </button>
+        </section>
+      )}
+
       {/* Cross-bureau overlap alert */}
       {stats.openOverlapAlerts > 0 && (
         <section
@@ -277,4 +317,3 @@ export const DashboardPage: React.FC = () => {
     </div>
   );
 };
-
