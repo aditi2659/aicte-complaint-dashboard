@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   PlusCircle, 
@@ -6,9 +6,11 @@ import {
   GitMerge, 
   Search,
   ExternalLink,
-  Menu
+  Menu,
+  LogOut
 } from 'lucide-react';
 import { useComplaints } from '../../context/ComplaintContext';
+import { useAuth } from '../../context/AuthContext';
 import { SYSTEM_USERS } from '../../data/mockData';
 import { RegisterComplaintModal } from '../complaints/RegisterComplaintModal';
 
@@ -20,6 +22,7 @@ export const Topbar: React.FC<TopbarProps> = ({ onToggleSidebar }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { overlaps, currentUser, setCurrentUser } = useComplaints();
+  const { user: authUser, logout } = useAuth();
   const [showUserDropdown, setShowUserDropdown] = useState(false);
   const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [quickSearch, setQuickSearch] = useState('');
@@ -171,6 +174,24 @@ export const Topbar: React.FC<TopbarProps> = ({ onToggleSidebar }) => {
                       </button>
                     ))}
                   </div>
+                  {/* Logout button */}
+                  {authUser && (
+                    <div className="mt-2 pt-2 border-t border-[#35473A]">
+                      <button
+                        onClick={() => {
+                          setShowUserDropdown(false);
+                          logout();
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
+                      >
+                        <LogOut size={13} />
+                        <span>Sign Out</span>
+                        {authUser.email && (
+                          <span className="ml-auto text-[10px] font-mono text-[#666] truncate max-w-[120px]">{authUser.email}</span>
+                        )}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </>
             )}
