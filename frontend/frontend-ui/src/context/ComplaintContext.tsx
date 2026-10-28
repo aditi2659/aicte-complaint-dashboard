@@ -1,24 +1,34 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { 
-  Complaint, 
-  Institution, 
-  OverlapMatch, 
-  AuditLog, 
-  ComplaintStatus, 
-  BureauCode, 
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import {
+  Complaint,
+  Institution,
+  OverlapMatch,
+  AuditLog,
+  ComplaintStatus,
+  BureauCode,
   TimelineAction,
   OverlapReviewStatus,
-  SystemUser
+  SystemUser,
+  AnalyticsRiskCase,
+  AnalyticsPriorityCase,
+  AnalyticsPatterns,
+  AnalyticsAlert
 } from '../types';
-import { 
-  INITIAL_COMPLAINTS, 
-  INSTITUTIONS, 
-  INITIAL_OVERLAPS, 
+import {
+  INITIAL_COMPLAINTS,
+  INSTITUTIONS,
+  INITIAL_OVERLAPS,
   INITIAL_AUDIT_LOGS,
   ASSIGNED_OFFICERS,
   SYSTEM_USERS,
   BUREAUS
 } from '../data/mockData';
+import {
+  ComplaintApiService,
+  authService,
+  DEMO_CREDENTIALS
+} from '../services/api';
+import { BUREAU_NAME_TO_CODE } from '../services/adapter';
 
 export interface DashboardStats {
   total: number;
@@ -63,18 +73,34 @@ interface ComplaintContextType {
   auditLogs: AuditLog[];
   currentUser: SystemUser;
   setCurrentUser: (user: SystemUser) => void;
+  dataSource: 'api' | 'fallback';
+  apiLoading: boolean;
+  apiError: string | null;
+  login: (email: string, password: string) => Promise<void>;
+  logout: () => void;
+  reloadFromApi: () => Promise<void>;
+  useMockFallback: () => void;
+  clearApiError: () => void;
   isOverdue: (complaint: Complaint) => boolean;
   getDaysRemainingOrOverdue: (complaint: Complaint) => { days: number; isOverdue: boolean };
   getComplaintById: (id: string) => Complaint | undefined;
   getInstitutionById: (id: string) => Institution | undefined;
   getStats: () => DashboardStats;
-  addComplaint: (data: Partial<Complaint>) => Complaint;
-  updateComplaintStatus: (id: string, newStatus: ComplaintStatus, remarks: string) => void;
-  transferBureau: (id: string, targetBureau: BureauCode, reason: string, remarks: string) => void;
+  addComplaint: (data: Partial<Complaint>) => Promise<Complaint>;
+  updateComplaintStatus: (id: string, newStatus: ComplaintStatus, remarks: string) => Promise<Complaint>;
+  transferBureau: (id: string, targetBureau: BureauCode, reason: string, remarks: string) => Promise<Complaint>;
   reassignOfficer: (id: string, officerId: string, remarks: string) => void;
   addTimelineAction: (id: string, actionType: TimelineAction['actionType'], title: string, remarks: string, docRef?: string) => void;
-  reviewOverlap: (id: string, status: OverlapReviewStatus, reviewNotes: string, relationshipType?: OverlapMatch['relationshipType']) => void;
+  reviewOverlap: (id: string, status: OverlapReviewStatus, reviewNotes: string, relationshipType?: OverlapMatch['relationshipType']) => Promise<void>;
   resetToInitialData: () => void;
+  analyticsAlerts: AnalyticsAlert[];
+  priorityCases: AnalyticsPriorityCase[];
+  riskCases: AnalyticsRiskCase[];
+  patterns: AnalyticsPatterns | null;
+  analyticsLoading: boolean;
+  analyticsError: string | null;
+  reloadAnalytics: (limit?: number) => Promise<void>;
+  fetchPriorityList: (limit?: number) => Promise<AnalyticsPriorityCase[]>;
 }
 
 const ComplaintContext = createContext<ComplaintContextType | undefined>(undefined);
@@ -82,59 +108,266 @@ const ComplaintContext = createContext<ComplaintContextType | undefined>(undefin
 const LOCAL_STORAGE_KEY_PREFIX = 'aicte_dashboard_';
 
 export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [complaints, setComplaints] = useState<Complaint[]>(() => {
-    const saved = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}complaints`);
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { console.error(e); }
-    }
-    return INITIAL_COMPLAINTS;
+  const [complaints, setComplaints] = useState<Complaint[]>(INITIAL_COMPLAINTS);
+  const [institutions, setInstitutions] = useState<Institution[]>(INSTITUTIONS);
+  const [overlaps, setOverlaps] = useState<OverlapMatch[]>(INITIAL_OVERLAPS);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(INITIAL_AUDIT_LOGS);
+  const [currentUser, setCurrentUserState] = useState<SystemUser>(() => {
+    return authService.getStoredUser() || SYSTEM_USERS[0];
   });
 
-  const [institutions, setInstitutions] = useState<Institution[]>(() => {
-    const saved = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}institutions`);
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { console.error(e); }
+  const [dataSource, setDataSource] = useState<'api' | 'fallback'>('fallback');
+  const [apiLoading, setApiLoading] = useState<boolean>(true);
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  // Analytics state loaded from /api/v1/analytics/*
+  const [analyticsAlerts, setAnalyticsAlerts] = useState<AnalyticsAlert[]>([]);
+  const [priorityCases, setPriorityCases] = useState<AnalyticsPriorityCase[]>([]);
+  const [riskCases, setRiskCases] = useState<AnalyticsRiskCase[]>([]);
+  const [patterns, setPatterns] = useState<AnalyticsPatterns | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState<boolean>(false);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+
+  const reloadAnalytics = useCallback(async (limit: number = 10) => {
+    setAnalyticsLoading(true);
+    setAnalyticsError(null);
+    try {
+      const [alertsRes, priorityRes, riskRes, patternsRes] = await Promise.all([
+        ComplaintApiService.getAlerts(),
+        ComplaintApiService.getPriorityList(limit),
+        ComplaintApiService.getRiskCases(),
+        ComplaintApiService.getPatterns(),
+      ]);
+
+      setAnalyticsAlerts(alertsRes.data || []);
+      setPriorityCases(priorityRes.data || []);
+      setRiskCases(riskRes.data || []);
+      setPatterns(patternsRes.data || { repeatedCategories: [], risingCategories: [], busyRegions: [] });
+      setAnalyticsError(null);
+    } catch (err: any) {
+      console.warn('[ComplaintContext] Analytics load failed:', err.message);
+      // Explicit error state: do not silently substitute mock data
+      setAnalyticsError(err.message || 'Failed to fetch analytics from backend.');
+    } finally {
+      setAnalyticsLoading(false);
     }
-    return INSTITUTIONS;
-  });
+  }, []);
 
-  const [overlaps, setOverlaps] = useState<OverlapMatch[]>(() => {
-    const saved = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}overlaps`);
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { console.error(e); }
+  const fetchPriorityList = useCallback(async (limit: number = 10): Promise<AnalyticsPriorityCase[]> => {
+    try {
+      const res = await ComplaintApiService.getPriorityList(limit);
+      setPriorityCases(res.data || []);
+      return res.data || [];
+    } catch (err: any) {
+      console.warn('[ComplaintContext] Priority list fetch failed:', err.message);
+      setAnalyticsError(err.message || 'Failed to fetch priority cases.');
+      throw err;
     }
-    return INITIAL_OVERLAPS;
-  });
+  }, []);
 
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
-    const saved = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}audit_logs`);
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { console.error(e); }
+  // Method to fetch live backend data from Express API
+  const loadDataFromApi = useCallback(async () => {
+    setApiLoading(true);
+    try {
+      const [compRes, ovrRes, instRes, logsRes] = await Promise.all([
+        ComplaintApiService.getComplaints(),
+        ComplaintApiService.getOverlaps(),
+        ComplaintApiService.getInstitutions(complaints),
+        ComplaintApiService.getAuditLogs().catch(() => ({ data: [] })),
+      ]);
+
+      setComplaints(compRes.data);
+      setOverlaps(ovrRes.data);
+      if (instRes.data && instRes.data.length > 0) {
+        setInstitutions(instRes.data);
+      }
+      if (logsRes && logsRes.data) {
+        setAuditLogs(logsRes.data);
+      }
+      setDataSource('api');
+      setApiError(null);
+      // Also fetch fresh backend analytics
+      reloadAnalytics();
+    } catch (err: any) {
+      console.warn('[ComplaintContext] Backend API request failed:', err.message);
+      setDataSource('fallback');
+      setApiError(err.message || 'Failed to fetch live records from /api/v1 backend.');
+      throw err;
+    } finally {
+      setApiLoading(false);
     }
-    return INITIAL_AUDIT_LOGS;
-  });
+  }, [complaints, reloadAnalytics]);
 
-  const [currentUser, setCurrentUser] = useState<SystemUser>(SYSTEM_USERS[0]);
-
-  // Persist to local storage for realistic state retention across actions
+  // Initial bootstrap: attempt authentication and live backend connection
   useEffect(() => {
-    localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}complaints`, JSON.stringify(complaints));
-  }, [complaints]);
+    let isMounted = true;
 
-  useEffect(() => {
-    localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}institutions`, JSON.stringify(institutions));
-  }, [institutions]);
+    const bootstrapAuthAndData = async () => {
+      setApiLoading(true);
+      try {
+        let token = authService.getToken();
 
-  useEffect(() => {
-    localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}overlaps`, JSON.stringify(overlaps));
-  }, [overlaps]);
+        // If no token exists, bootstrap with demo administrator
+        if (!token) {
+          const defaultCred = DEMO_CREDENTIALS[0];
+          const loginData = await authService.login(defaultCred.email, defaultCred.password);
+          token = loginData.token;
 
-  useEffect(() => {
-    localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}audit_logs`, JSON.stringify(auditLogs));
-  }, [auditLogs]);
+          const defaultUser: SystemUser = {
+            id: loginData.user.id,
+            name: loginData.user.full_name,
+            email: loginData.user.email,
+            role: 'SUPER_ADMIN',
+            bureau: 'RB',
+            permissions: ['VIEW_ALL', 'ASSIGN_OFFICER', 'TRANSFER_BUREAU', 'DISPOSE_CASE', 'REVIEW_OVERLAP'],
+            lastLogin: new Date().toISOString(),
+          };
 
-  // Overdue calculation rule:
-  // An overdue condition is calculated if dueDate < current timestamp and status != 'DISPOSED'
+          authService.setSession(token, defaultUser);
+          if (isMounted) {
+            setCurrentUserState(defaultUser);
+          }
+        }
+
+        const [compRes, ovrRes, instRes, logsRes] = await Promise.all([
+          ComplaintApiService.getComplaints(),
+          ComplaintApiService.getOverlaps(),
+          ComplaintApiService.getInstitutions(),
+          ComplaintApiService.getAuditLogs().catch(() => ({ data: [] })),
+        ]);
+
+        if (isMounted) {
+          setComplaints(compRes.data);
+          setOverlaps(ovrRes.data);
+          if (instRes.data && instRes.data.length > 0) {
+            setInstitutions(instRes.data);
+          }
+          if (logsRes && logsRes.data) {
+            setAuditLogs(logsRes.data);
+          }
+          setDataSource('api');
+          setApiError(null);
+        }
+      } catch (err: any) {
+        if (isMounted) {
+          setDataSource('fallback');
+          setApiError(err.message || 'Unable to connect to live Express API. Running with local development fallback.');
+        }
+      } finally {
+        if (isMounted) {
+          setApiLoading(false);
+        }
+      }
+    };
+
+    bootstrapAuthAndData();
+
+    const unsub = authService.onUnauthorized(() => {
+      if (isMounted) {
+        setDataSource('fallback');
+        setApiError('Session expired or unauthorized (401). Please log in to restore live backend connectivity.');
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsub();
+    };
+  }, []);
+
+  // Login handler
+  const login = async (email: string, password: string) => {
+    setApiLoading(true);
+    setApiError(null);
+    try {
+      const result = await authService.login(email, password);
+      const bureauCode = result.user.bureau ? (BUREAU_NAME_TO_CODE[result.user.bureau] || 'RB') : 'RB';
+
+      let uiRole: SystemUser['role'] = 'SUPER_ADMIN';
+      if (result.user.role === 'BUREAU_HEAD') uiRole = 'BUREAU_HEAD';
+      else if (result.user.role === 'BUREAU_OFFICER') uiRole = 'COMPLAINT_OFFICER';
+      else if (result.user.role === 'GRIEVANCE_OFFICER') uiRole = 'PGRC_MEMBER';
+      else if (result.user.role === 'AUDITOR') uiRole = 'AUDITOR';
+
+      const authenticatedUser: SystemUser = {
+        id: result.user.id,
+        name: result.user.full_name,
+        email: result.user.email,
+        role: uiRole,
+        bureau: bureauCode,
+        permissions: ['VIEW_ALL', 'ASSIGN_OFFICER', 'TRANSFER_BUREAU', 'DISPOSE_CASE', 'REVIEW_OVERLAP'],
+        lastLogin: new Date().toISOString(),
+      };
+
+      authService.setSession(result.token, authenticatedUser);
+      setCurrentUserState(authenticatedUser);
+
+      // Load complaints and overlaps scoped to this user
+      const [compRes, ovrRes, instRes, logsRes] = await Promise.all([
+        ComplaintApiService.getComplaints(),
+        ComplaintApiService.getOverlaps(),
+        ComplaintApiService.getInstitutions(),
+        ComplaintApiService.getAuditLogs().catch(() => ({ data: [] })),
+      ]);
+
+      setComplaints(compRes.data);
+      setOverlaps(ovrRes.data);
+      if (instRes.data && instRes.data.length > 0) {
+        setInstitutions(instRes.data);
+      }
+      if (logsRes && logsRes.data) {
+        setAuditLogs(logsRes.data);
+      }
+      setDataSource('api');
+      setApiError(null);
+      await reloadAnalytics();
+    } catch (err: any) {
+      setApiError(err.message || 'Login failed.');
+      throw err;
+    } finally {
+      setApiLoading(false);
+    }
+  };
+
+  const logout = () => {
+    authService.clearSession();
+    setDataSource('fallback');
+    setAnalyticsAlerts([]);
+    setPriorityCases([]);
+    setRiskCases([]);
+    setPatterns(null);
+    setAnalyticsError(null);
+    setApiError('Logged out. Operating in offline development fallback.');
+  };
+
+  const reloadFromApi = async () => {
+    await loadDataFromApi();
+  };
+
+  const useMockFallback = () => {
+    setComplaints(INITIAL_COMPLAINTS);
+    setInstitutions(INSTITUTIONS);
+    setOverlaps(INITIAL_OVERLAPS);
+    setAuditLogs(INITIAL_AUDIT_LOGS);
+    setDataSource('fallback');
+    setApiError('Explicit fallback enabled. Operating on local development mock data.');
+  };
+
+  const clearApiError = () => {
+    setApiError(null);
+  };
+
+  // Custom user setter that auto-authenticates if switching to a known demo persona
+  const setCurrentUser = (user: SystemUser) => {
+    setCurrentUserState(user);
+    const demo = DEMO_CREDENTIALS.find(d => d.email.toLowerCase() === user.email.toLowerCase());
+    if (demo) {
+      login(demo.email, demo.password).catch(err => {
+        console.warn('Persona auto-login failed:', err.message);
+      });
+    }
+  };
+
   const isOverdue = (complaint: Complaint): boolean => {
     if (complaint.status === 'DISPOSED') return false;
     const dueTime = new Date(complaint.dueDate).getTime();
@@ -177,150 +410,67 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setAuditLogs(prev => [newLog, ...prev]);
   };
 
-  const addComplaint = (data: Partial<Complaint>): Complaint => {
-    const newId = `CMP-${Date.now().toString().slice(-6)}`;
-    const bureau = data.currentBureau || 'PGRC';
-    const year = new Date().getFullYear();
-    const caseNumber = `AICTE/${bureau}/${year}/${Math.floor(1000 + Math.random() * 9000)}`;
-    const nowIso = new Date().toISOString();
-    
-    // Default due date: 30 days from now
-    const due = new Date();
-    due.setDate(due.getDate() + 30);
-
-    const assigned = ASSIGNED_OFFICERS.find(o => o.bureau === bureau) || ASSIGNED_OFFICERS[0];
-    const inst = institutions.find(i => i.id === data.institutionId) || institutions[0];
-
-    const newComplaint: Complaint = {
-      id: newId,
-      caseNumber,
-      institutionId: inst.id,
-      institutionName: inst.name,
-      aictePermanentId: inst.aictePermanentId,
-      region: inst.region,
-      state: inst.state,
-      category: data.category || 'INFRASTRUCTURE_DEFICIENCY',
-      categoryLabel: data.categoryLabel || 'Grievance matter',
-      subject: data.subject || 'Complaint Subject',
-      description: data.description || 'Details of the grievance filed.',
-      currentBureau: bureau,
-      assignedOfficer: data.assignedOfficer || assigned,
-      status: 'RECEIVED',
-      complainantType: data.complainantType || 'STUDENT',
-      lodgingChannel: data.lodgingChannel || 'ONLINE_PORTAL',
-      registrationDate: nowIso,
-      lastActionDate: nowIso,
-      dueDate: data.dueDate || due.toISOString(),
-      priority: data.priority || 'NORMAL',
-      hasActiveOverlap: false,
-      linkedComplaintIds: [],
-      supportingDocs: data.supportingDocs || [],
-      timeline: [
-        {
-          id: `TL-${Date.now()}`,
-          timestamp: nowIso,
-          actionType: 'REGISTRATION',
-          title: 'Complaint Registered in National Portal',
-          performedBy: currentUser.name,
-          officerRole: currentUser.role,
-          bureau: currentUser.bureau,
-          remarks: `Initial registration under ${bureau}. Case assigned to ${assigned.name}.`,
-        },
-      ],
-    };
-
-    setComplaints(prev => [newComplaint, ...prev]);
-
-    // Update institution stats
-    setInstitutions(prev => prev.map(item => {
-      if (item.id === inst.id) {
-        return {
-          ...item,
-          totalComplaints: item.totalComplaints + 1,
-          pendingComplaints: item.pendingComplaints + 1,
-          lastComplaintDate: nowIso.split('T')[0],
-        };
-      }
-      return item;
-    }));
-
-    logAudit('COMPLAINT_REGISTERED', 'COMPLAINT', caseNumber, `New complaint registered for ${inst.name}`);
-    return newComplaint;
+  const addComplaint = async (data: Partial<Complaint>): Promise<Complaint> => {
+    try {
+      const res = await ComplaintApiService.createComplaint(data);
+      const newComplaint = res.data;
+      setComplaints(prev => [newComplaint, ...prev.filter(c => c.id !== newComplaint.id)]);
+      logAudit(
+        'COMPLAINT_REGISTERED',
+        'COMPLAINT',
+        newComplaint.caseNumber || newComplaint.id,
+        `Registered with category ${newComplaint.categoryLabel || newComplaint.category}`
+      );
+      // Refresh complaints and analytics in background
+      loadDataFromApi().catch(err => console.warn('[ComplaintContext] Refresh complaints failed:', err.message));
+      reloadAnalytics().catch(err => console.warn('[ComplaintContext] Reload analytics failed:', err.message));
+      return newComplaint;
+    } catch (err: any) {
+      console.error('[ComplaintContext] Failed to register complaint:', err.message);
+      throw err;
+    }
   };
 
-  const updateComplaintStatus = (id: string, newStatus: ComplaintStatus, remarks: string) => {
-    const nowIso = new Date().toISOString();
-    setComplaints(prev => prev.map(c => {
-      if (c.id === id) {
-        const timelineEntry: TimelineAction = {
-          id: `TL-${Date.now()}`,
-          timestamp: nowIso,
-          actionType: newStatus === 'DISPOSED' ? 'FINAL_DISPOSAL_ORDER' : 'STATUS_CHANGE',
-          title: `Status Updated to ${newStatus}`,
-          performedBy: currentUser.name,
-          officerRole: currentUser.role,
-          bureau: currentUser.bureau,
-          remarks: remarks || `Status transition from ${c.status} to ${newStatus}.`,
-        };
-
-        // Update institution counter if moving to DISPOSED
-        if (newStatus === 'DISPOSED' && c.status !== 'DISPOSED') {
-          setInstitutions(insts => insts.map(i => {
-            if (i.id === c.institutionId) {
-              return {
-                ...i,
-                disposedComplaints: i.disposedComplaints + 1,
-                pendingComplaints: Math.max(0, i.pendingComplaints - 1),
-                underProcessComplaints: Math.max(0, i.underProcessComplaints - 1),
-              };
-            }
-            return i;
-          }));
-        }
-
-        logAudit('STATUS_UPDATED', 'COMPLAINT', c.caseNumber, `Status updated to ${newStatus}. Remarks: ${remarks}`);
-
-        return {
-          ...c,
-          status: newStatus,
-          lastActionDate: nowIso,
-          timeline: [timelineEntry, ...c.timeline],
-        };
-      }
-      return c;
-    }));
+  const updateComplaintStatus = async (id: string, newStatus: ComplaintStatus, remarks: string): Promise<Complaint> => {
+    try {
+      const res = await ComplaintApiService.updateStatus(id, newStatus, remarks);
+      const updated = res.data;
+      setComplaints(prev => prev.map(c => (c.id === id ? updated : c)));
+      logAudit(
+        'STATUS_UPDATED',
+        'COMPLAINT',
+        updated.caseNumber || updated.id,
+        `Status updated to ${newStatus}. Remarks: ${remarks}`
+      );
+      // Refresh complaints and analytics in background
+      loadDataFromApi().catch(err => console.warn('[ComplaintContext] Refresh complaints failed:', err.message));
+      reloadAnalytics().catch(err => console.warn('[ComplaintContext] Reload analytics failed:', err.message));
+      return updated;
+    } catch (err: any) {
+      console.error('[ComplaintContext] Failed to update complaint status:', err.message);
+      throw err;
+    }
   };
 
-  const transferBureau = (id: string, targetBureau: BureauCode, reason: string, remarks: string) => {
-    const nowIso = new Date().toISOString();
-    const targetOfficer = ASSIGNED_OFFICERS.find(o => o.bureau === targetBureau) || ASSIGNED_OFFICERS[0];
-
-    setComplaints(prev => prev.map(c => {
-      if (c.id === id) {
-        const timelineEntry: TimelineAction = {
-          id: `TL-${Date.now()}`,
-          timestamp: nowIso,
-          actionType: 'BUREAU_TRANSFER',
-          title: `Transferred from ${c.currentBureau} to ${targetBureau}`,
-          performedBy: currentUser.name,
-          officerRole: currentUser.role,
-          bureau: currentUser.bureau,
-          remarks: `Transfer Reason: ${reason}. Remarks: ${remarks}. Handed over to ${targetOfficer.name}.`,
-        };
-
-        logAudit('BUREAU_TRANSFER', 'COMPLAINT', c.caseNumber, `Transferred from ${c.currentBureau} to ${targetBureau}. Reason: ${reason}`);
-
-        return {
-          ...c,
-          currentBureau: targetBureau,
-          assignedOfficer: targetOfficer,
-          status: 'TRANSFERRED',
-          lastActionDate: nowIso,
-          timeline: [timelineEntry, ...c.timeline],
-        };
-      }
-      return c;
-    }));
+  const transferBureau = async (id: string, targetBureau: BureauCode, reason: string, remarks: string): Promise<Complaint> => {
+    try {
+      const res = await ComplaintApiService.transferBureau(id, targetBureau, reason, remarks);
+      const updated = res.data;
+      setComplaints(prev => prev.map(c => (c.id === id ? updated : c)));
+      logAudit(
+        'BUREAU_TRANSFER',
+        'COMPLAINT',
+        updated.caseNumber || updated.id,
+        `Transferred to ${targetBureau}. Reason: ${reason}`
+      );
+      // Refresh complaints and analytics in background
+      loadDataFromApi().catch(err => console.warn('[ComplaintContext] Refresh complaints failed:', err.message));
+      reloadAnalytics().catch(err => console.warn('[ComplaintContext] Reload analytics failed:', err.message));
+      return updated;
+    } catch (err: any) {
+      console.error('[ComplaintContext] Failed to transfer complaint:', err.message);
+      throw err;
+    }
   };
 
   const reassignOfficer = (id: string, officerId: string, remarks: string) => {
@@ -355,10 +505,10 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const addTimelineAction = (
-    id: string, 
-    actionType: TimelineAction['actionType'], 
-    title: string, 
-    remarks: string, 
+    id: string,
+    actionType: TimelineAction['actionType'],
+    title: string,
+    remarks: string,
     docRef?: string
   ) => {
     const nowIso = new Date().toISOString();
@@ -388,12 +538,44 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }));
   };
 
-  const reviewOverlap = (
-    id: string, 
-    status: OverlapReviewStatus, 
-    reviewNotes: string, 
+  // Real reviewOverlap calling the authorized review API
+  const reviewOverlap = async (
+    id: string,
+    status: OverlapReviewStatus,
+    reviewNotes: string,
     relationshipType?: OverlapMatch['relationshipType']
   ) => {
+    const token = authService.getToken();
+
+    if (dataSource === 'api' || token) {
+      try {
+        const res = await ComplaintApiService.reviewOverlap(id, status, reviewNotes);
+        // Update the overlap in state
+        setOverlaps(prev => prev.map(o => o.id === id ? res.data : o));
+
+        // Re-fetch complaints from API to reflect updated overlap flags and matched case IDs
+        try {
+          const compRes = await ComplaintApiService.getComplaints();
+          setComplaints(compRes.data);
+        } catch (e) {
+          console.warn('Failed to refresh complaints after overlap review:', e);
+        }
+
+        logAudit(
+          status === 'CONFIRMED_RELATED' ? 'OVERLAP_CONFIRMED' : 'OVERLAP_DISMISSED',
+          'OVERLAP',
+          id,
+          `Live backend review recorded: ${status}. Notes: ${reviewNotes}`
+        );
+        return;
+      } catch (err: any) {
+        console.error('API overlap review error:', err);
+        setApiError(err.message || 'Failed to record overlap review on backend.');
+        throw err;
+      }
+    }
+
+    // Local fallback when running offline
     const nowIso = new Date().toISOString();
     let targetOverlap: OverlapMatch | undefined;
 
@@ -413,17 +595,16 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }));
 
     if (targetOverlap) {
-      // If confirmed, link the two complaints together for cross-reference (without auto-merging!)
       if (status === 'CONFIRMED_RELATED') {
         const cA = targetOverlap.complaintAId;
         const cB = targetOverlap.complaintBId;
 
         setComplaints(prev => prev.map(c => {
           if (c.id === cA && !c.linkedComplaintIds.includes(cB)) {
-            return { ...c, linkedComplaintIds: [...c.linkedComplaintIds, cB] };
+            return { ...c, linkedComplaintIds: [...c.linkedComplaintIds, cB], hasActiveOverlap: true };
           }
           if (c.id === cB && !c.linkedComplaintIds.includes(cA)) {
-            return { ...c, linkedComplaintIds: [...c.linkedComplaintIds, cA] };
+            return { ...c, linkedComplaintIds: [...c.linkedComplaintIds, cA], hasActiveOverlap: true };
           }
           return c;
         }));
@@ -447,6 +628,8 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setInstitutions(INSTITUTIONS);
     setOverlaps(INITIAL_OVERLAPS);
     setAuditLogs(INITIAL_AUDIT_LOGS);
+    setDataSource('fallback');
+    setApiError('Reset to initial local mock baseline.');
   };
 
   const getStats = (): DashboardStats => {
@@ -483,7 +666,7 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       };
     });
 
-    // Monthly trends (mocked realistic aggregated timeline)
+    // Monthly trends
     const monthlyTrends = [
       { month: 'May 2026', registered: 18, disposed: 14 },
       { month: 'Jun 2026', registered: 24, disposed: 19 },
@@ -493,7 +676,7 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       { month: 'Oct 2026', registered: 42, disposed: 33 },
     ];
 
-    // Status distribution with unified theme palette
+    // Status distribution
     const statusDistribution = [
       { name: 'Under Process', value: underProcessCount, color: '#C4F279' },
       { name: 'Pending / Received', value: pendingCount, color: '#E5A93C' },
@@ -505,7 +688,7 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Category distribution
     const catMap: Record<string, number> = {};
     complaints.forEach(c => {
-      const key = c.category.replace(/_/g, ' ');
+      const key = (c.categoryLabel || c.category || 'General').replace(/_/g, ' ');
       catMap[key] = (catMap[key] || 0) + 1;
     });
 
@@ -541,6 +724,14 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         auditLogs,
         currentUser,
         setCurrentUser,
+        dataSource,
+        apiLoading,
+        apiError,
+        login,
+        logout,
+        reloadFromApi,
+        useMockFallback,
+        clearApiError,
         isOverdue,
         getDaysRemainingOrOverdue,
         getComplaintById,
@@ -553,6 +744,14 @@ export const ComplaintProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         addTimelineAction,
         reviewOverlap,
         resetToInitialData,
+        analyticsAlerts,
+        priorityCases,
+        riskCases,
+        patterns,
+        analyticsLoading,
+        analyticsError,
+        reloadAnalytics,
+        fetchPriorityList,
       }}
     >
       {children}

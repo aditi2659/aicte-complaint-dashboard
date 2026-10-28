@@ -18,16 +18,26 @@ export const StatusUpdateModal: React.FC<StatusUpdateModalProps> = ({
   const [status, setStatus] = useState<ComplaintStatus>(complaint.status);
   const [remarks, setRemarks] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!remarks.trim()) {
       setError('Please provide mandatory case remarks justifying this status transition.');
       return;
     }
 
-    updateComplaintStatus(complaint.id, status, remarks);
-    onClose();
+    setLoading(true);
+    setError('');
+
+    try {
+      await updateComplaintStatus(complaint.id, status, remarks.trim());
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'Failed to update complaint status. Please check your permissions.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const statuses: { value: ComplaintStatus; label: string; desc: string }[] = [
@@ -109,15 +119,17 @@ export const StatusUpdateModal: React.FC<StatusUpdateModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 border border-[#35473A] bg-[#222F25] text-[#A6B7A8] hover:text-[#E6EFE5] hover:bg-[#27362B] transition-colors"
+            disabled={loading}
+            className="px-4 py-2 border border-[#35473A] bg-[#222F25] text-[#A6B7A8] hover:text-[#E6EFE5] hover:bg-[#27362B] transition-colors disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             type="submit"
-            className="px-5 py-2 bg-[#C4F279] hover:bg-[#B2E560] text-[#101713] font-bold font-mono transition-colors shadow-xs"
+            disabled={loading}
+            className="px-5 py-2 bg-[#C4F279] hover:bg-[#B2E560] text-[#101713] font-bold font-mono transition-colors shadow-xs disabled:opacity-50"
           >
-            Confirm Status Update
+            {loading ? 'Updating Status...' : 'Confirm Status Update'}
           </button>
         </div>
       </form>

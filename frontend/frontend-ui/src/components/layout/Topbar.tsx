@@ -1,9 +1,9 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { 
-  PlusCircle, 
-  ChevronDown, 
-  GitMerge, 
+import {
+  PlusCircle,
+  ChevronDown,
+  GitMerge,
   Search,
   ExternalLink,
   Menu,
@@ -13,6 +13,7 @@ import { useComplaints } from '../../context/ComplaintContext';
 import { useAuth } from '../../context/AuthContext';
 import { SYSTEM_USERS } from '../../data/mockData';
 import { RegisterComplaintModal } from '../complaints/RegisterComplaintModal';
+import { LoginModal } from '../auth/LoginModal';
 
 interface TopbarProps {
   onToggleSidebar?: () => void;
@@ -25,130 +26,115 @@ export const Topbar: React.FC<TopbarProps> = ({ onToggleSidebar }) => {
   const { user: authUser, logout } = useAuth();
   const [showUserDropdown, setShowUserDropdown] = useState(false);
   const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
   const [quickSearch, setQuickSearch] = useState('');
 
   const unreviewedOverlaps = overlaps.filter(o => o.reviewStatus === 'UNREVIEWED');
 
-  const getPageTitle = () => {
-    const path = location.pathname;
-    if (path === '/') return 'Executive Oversight Dashboard';
-    if (path.startsWith('/complaints/')) return 'Complaint Case Dossier';
-    if (path === '/complaints') return 'National Complaint Registry';
-    if (path === '/overlaps') return 'Cross-Bureau Overlap Detection Centre';
-    if (path.startsWith('/institutions/')) return 'Institution Profile & History';
-    if (path === '/institutions') return 'Institution Master Directory';
-    if (path === '/reports') return 'System Analytics & Workload Reports';
-    if (path === '/admin') return 'Administration, Roles & Audit Trails';
-    return 'AICTE Integrated Grievance Portal';
-  };
-
-  const handleQuickSearchSubmit = (e: React.FormEvent) => {
+  const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!quickSearch.trim()) return;
-    navigate(`/complaints?search=${encodeURIComponent(quickSearch.trim())}`);
+    if (quickSearch.trim()) {
+      navigate(`/complaints?search=${encodeURIComponent(quickSearch.trim())}`);
+      setQuickSearch('');
+    }
   };
 
   return (
     <>
-      <header className="h-16 bg-[#000000] border-b border-[#35473A] px-4 sm:px-6 flex items-center justify-between gap-2 sm:gap-4 shrink-0 sticky top-0 z-30 min-w-0 w-full">
-        {/* Left: Mobile hamburger + View title */}
-        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 shrink">
+      <header className="h-16 border-b border-[#292929] bg-[#000000] px-4 md:px-8 flex items-center justify-between gap-4 sticky top-0 z-30">
+        {/* Left: Mobile Menu Trigger + Breadcrumb */}
+        <div className="flex items-center gap-4">
           {onToggleSidebar && (
             <button
               onClick={onToggleSidebar}
-              className="lg:hidden p-1.5 text-[#B8CBB9] hover:text-[#E6EFE5] hover:bg-[#1A241D] border border-[#35473A] transition-colors shrink-0"
-              title="Open Navigation"
+              className="md:hidden p-2 text-[#B5B5B5] hover:text-[#F5F5F5] hover:bg-[#1A1A1A] transition-colors"
+              aria-label="Toggle Navigation"
             >
               <Menu size={18} />
             </button>
           )}
 
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-              <span className="w-1.5 h-1.5 bg-[#C4F279] shrink-0" />
-              <h2 className="text-xs sm:text-sm font-bold text-[#E6EFE5] font-mono tracking-tight truncate">
-                {getPageTitle()}
-              </h2>
-            </div>
-            <p className="text-[10px] sm:text-[11px] text-[#B8CBB9] truncate hidden sm:block">
-              All India Council for Technical Education • Regulatory Portal
-            </p>
+          <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-[#B5B5B5]">
+            <span className="text-[#FF69B4] font-bold">AICTE</span>
+            <span>/</span>
+            <span className="uppercase tracking-wider">
+              {location.pathname === '/' ? 'DASHBOARD' : location.pathname.replace('/', '').toUpperCase()}
+            </span>
           </div>
         </div>
 
-        {/* Center: Search (visible on wide screens without causing layout push) */}
-        <div className="hidden xl:flex items-center max-w-[200px] 2xl:max-w-xs w-full mx-2 shrink">
-          <form onSubmit={handleQuickSearchSubmit} className="relative w-full">
-            <Search size={14} className="absolute left-3 top-2.5 text-[#8EA490]" />
+        {/* Center: Quick Search */}
+        <div className="flex-1 max-w-md hidden md:block">
+          <form onSubmit={handleSearch} className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#B5B5B5]" size={14} />
             <input
               type="text"
-              placeholder="Search case #, institute..."
+              placeholder="Quick search by Case #, Institute or Keyword..."
               value={quickSearch}
               onChange={(e) => setQuickSearch(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 text-xs font-mono bg-[#1A241D] border border-[#35473A] text-[#E6EFE5] placeholder-[#8EA490] focus:outline-none focus:border-[#C4F279] focus:ring-1 focus:ring-[#C4F279]/30"
+              className="w-full bg-[#0D0D0D] border border-[#292929] pl-9 pr-4 py-1.5 text-xs text-[#F5F5F5] placeholder-[#B5B5B5] focus:outline-none focus:border-[#C4F279] transition-colors font-mono"
             />
           </form>
         </div>
 
-        {/* Right Actions - Gracefully adapts and wraps without overflow */}
-        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-          {/* Overlap notification badge */}
+        {/* Right: Actions & User Menu */}
+        <div className="flex items-center gap-3">
+          {/* Overlap alert button if any pending */}
           {unreviewedOverlaps.length > 0 && (
             <button
               onClick={() => navigate('/overlaps')}
-              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-[#FF8BCB]/12 border border-[#FF8BCB]/50 hover:bg-[#FF8BCB]/22 text-[#FF8BCB] text-xs font-mono transition-all group shrink-0"
-              title="Review unconfirmed cross-bureau overlap flags"
+              className="flex items-center gap-2 px-3 py-1.5 bg-[#FF69B4]/10 border border-[#FF69B4] text-[#FF69B4] hover:bg-[#FF69B4]/20 transition-colors text-xs font-mono animate-pulse"
+              title={`${unreviewedOverlaps.length} overlaps require review`}
             >
-              <GitMerge size={13} className="text-[#FF8BCB]" />
-              <span className="font-bold whitespace-nowrap">
-                {unreviewedOverlaps.length} <span className="hidden sm:inline">Overlap Alert</span>
+              <GitMerge size={14} />
+              <span className="hidden sm:inline font-bold">OVERLAPS</span>
+              <span className="bg-[#FF69B4] text-black text-[10px] px-1.5 py-0.2 font-black rounded-sm">
+                {unreviewedOverlaps.length}
               </span>
-              <ExternalLink size={10} className="opacity-70 group-hover:opacity-100 hidden md:inline" />
             </button>
           )}
 
-          {/* Register Complaint Shortcut */}
+          {/* Register New Complaint Button */}
           <button
             onClick={() => setShowRegisterModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#C4F279] hover:bg-[#B2E560] text-[#101713] text-xs font-bold font-mono transition-colors shadow-xs shrink-0"
+            className="flex items-center gap-2 px-3 py-1.5 bg-[#C4F279] text-black hover:bg-[#A8E05F] transition-colors text-xs font-bold font-mono tracking-wider shadow-[0_0_10px_rgba(196,242,121,0.2)]"
           >
             <PlusCircle size={14} />
-            <span className="hidden md:inline whitespace-nowrap">Register Complaint</span>
+            <span className="hidden sm:inline">REGISTER CASE</span>
+            <span className="sm:hidden">NEW</span>
           </button>
 
-          {/* User Profile / Switcher Dropdown */}
-          <div className="relative shrink-0">
+          {/* User Role Selector */}
+          <div className="relative">
             <button
               onClick={() => setShowUserDropdown(!showUserDropdown)}
-              className="flex items-center gap-2 px-2 py-1.5 bg-[#1A241D] border border-[#35473A] hover:border-[#4E6654] transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 bg-[#0D0D0D] border border-[#292929] hover:border-[#333333] transition-colors text-left"
             >
-              <div className="w-6 h-6 sm:w-7 sm:h-7 bg-[#222F25] border border-[#35473A] flex items-center justify-center font-mono text-xs font-bold text-[#C4F279] shrink-0">
-                {currentUser.name.split(' ').map(n => n[0]).slice(0, 2).join('')}
-              </div>
-              <div className="text-left hidden 2xl:block">
-                <div className="text-xs font-medium text-[#E6EFE5] leading-tight truncate max-w-[110px]">
-                  {currentUser.name}
+              <div className="w-2 h-2 rounded-full bg-[#C4F279]" />
+              <div className="hidden lg:block">
+                <div className="text-[11px] font-bold text-[#F5F5F5] leading-tight">
+                  {authUser?.name || currentUser.name}
                 </div>
-                <div className="text-[10px] font-mono text-[#8EA490]">
-                  {currentUser.role.replace(/_/g, ' ')} • {currentUser.bureau}
+                <div className="text-[9px] font-mono text-[#B5B5B5] tracking-wider">
+                  {authUser?.role || currentUser.role}
                 </div>
               </div>
-              <ChevronDown size={13} className="text-[#8EA490]" />
+              <ChevronDown size={12} className="text-[#B5B5B5]" />
             </button>
 
             {/* Switch User Dropdown */}
             {showUserDropdown && (
               <>
-                <div 
-                  className="fixed inset-0 z-40" 
-                  onClick={() => setShowUserDropdown(false)} 
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setShowUserDropdown(false)}
                 />
                 <div className="absolute right-0 mt-2 w-72 bg-[#1A241D] border border-[#35473A] shadow-2xl z-50 p-2">
                   <div className="px-3 py-2 border-b border-[#35473A] text-[11px] font-mono text-[#B8CBB9] flex items-center justify-between">
-                    <span>Switch Active Persona (Demo Role):</span>
-                    <span className="w-1.5 h-1.5 bg-[#C4F279]" />
+                    <span>ACTIVE OPERATOR</span>
+                    <span className="text-[9px] text-[#A8E05F]">SWITCH ROLE</span>
                   </div>
-                  <div className="space-y-1 mt-1">
+                  <div className="py-1 max-h-64 overflow-y-auto">
                     {SYSTEM_USERS.map((user) => (
                       <button
                         key={user.id}
@@ -156,24 +142,38 @@ export const Topbar: React.FC<TopbarProps> = ({ onToggleSidebar }) => {
                           setCurrentUser(user);
                           setShowUserDropdown(false);
                         }}
-                        className={`w-full text-left px-3 py-2 text-xs font-medium transition-colors flex items-center justify-between ${
+                        className={`w-full text-left px-3 py-2 text-xs transition-colors flex flex-col gap-0.5 ${
                           currentUser.id === user.id
-                            ? 'bg-[#222F25] text-[#C4F279] border border-[#35473A]'
-                            : 'text-[#B8CBB9] hover:bg-[#222F25] hover:text-[#E6EFE5]'
+                            ? 'bg-[#2D3F32] text-[#C4F279] border-l-2 border-[#C4F279]'
+                            : 'text-[#E5EFE6] hover:bg-[#222F25]'
                         }`}
                       >
-                        <div>
-                          <div className="font-semibold text-[#E6EFE5]">{user.name}</div>
-                          <div className="text-[10px] text-[#8EA490]">
-                            {user.role.replace(/_/g, ' ')} • Bureau: <span className="text-[#C4F279]">{user.bureau}</span>
-                          </div>
+                        <div className="font-semibold flex items-center justify-between">
+                          <span>{user.name}</span>
+                          <span className="text-[9px] font-mono px-1 bg-[#121A14] text-[#B8CBB9] border border-[#35473A]">
+                            {user.bureau}
+                          </span>
                         </div>
-                        {currentUser.id === user.id && (
-                          <span className="w-1.5 h-1.5 bg-[#C4F279]" />
-                        )}
+                        <div className="text-[10px] text-[#8EA291] font-mono">
+                          {user.role}
+                        </div>
                       </button>
                     ))}
                   </div>
+
+                  <div className="pt-2 mt-2 border-t border-[#35473A]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowUserDropdown(false);
+                        setShowLoginModal(true);
+                      }}
+                      className="w-full text-center py-1.5 px-2 bg-[#222F25] hover:bg-[#2D3F32] border border-[#35473A] text-xs font-mono text-[#C4F279] transition-colors"
+                    >
+                      Enter Official Credentials...
+                    </button>
+                  </div>
+
                   {/* Logout button */}
                   {authUser && (
                     <div className="mt-2 pt-2 border-t border-[#35473A]">
@@ -199,11 +199,19 @@ export const Topbar: React.FC<TopbarProps> = ({ onToggleSidebar }) => {
         </div>
       </header>
 
-      {/* Global Register Complaint Modal */}
+      {/* Complaint Registration Modal */}
       {showRegisterModal && (
         <RegisterComplaintModal
           isOpen={showRegisterModal}
           onClose={() => setShowRegisterModal(false)}
+        />
+      )}
+
+      {/* Global Login Modal */}
+      {showLoginModal && (
+        <LoginModal
+          isOpen={showLoginModal}
+          onClose={() => setShowLoginModal(false)}
         />
       )}
     </>

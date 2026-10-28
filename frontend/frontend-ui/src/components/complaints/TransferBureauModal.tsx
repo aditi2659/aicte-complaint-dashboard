@@ -16,23 +16,33 @@ export const TransferBureauModal: React.FC<TransferBureauModalProps> = ({
   onClose,
 }) => {
   const { transferBureau } = useComplaints();
-  
+
   // Default to a different bureau
   const otherBureaus = BUREAUS.filter(b => b.code !== complaint.currentBureau);
   const [targetBureau, setTargetBureau] = useState<BureauCode>(otherBureaus[0]?.code || 'AB');
   const [reason, setReason] = useState('Regulatory jurisdiction realignment');
   const [remarks, setRemarks] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!remarks.trim()) {
       setError('Please provide specific handover instructions and context for the receiving bureau.');
       return;
     }
 
-    transferBureau(complaint.id, targetBureau, reason, remarks);
-    onClose();
+    setLoading(true);
+    setError('');
+
+    try {
+      await transferBureau(complaint.id, targetBureau, reason, remarks.trim());
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'Failed to transfer complaint. Please verify your bureau authorization.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const commonReasons = [
@@ -122,15 +132,17 @@ export const TransferBureauModal: React.FC<TransferBureauModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 border border-[#35473A] bg-[#222F25] text-[#A6B7A8] hover:text-[#E6EFE5] hover:bg-[#27362B] transition-colors"
+            disabled={loading}
+            className="px-4 py-2 border border-[#35473A] bg-[#222F25] text-[#A6B7A8] hover:text-[#E6EFE5] hover:bg-[#27362B] transition-colors disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             type="submit"
-            className="px-5 py-2 bg-[#FF8BCB] hover:bg-[#F278BA] text-[#101713] font-bold font-mono transition-colors shadow-xs"
+            disabled={loading}
+            className="px-5 py-2 bg-[#FF8BCB] hover:bg-[#F278BA] text-[#101713] font-bold font-mono transition-colors shadow-xs disabled:opacity-50"
           >
-            Execute Inter-Bureau Transfer
+            {loading ? 'Executing Transfer...' : 'Execute Inter-Bureau Transfer'}
           </button>
         </div>
       </form>

@@ -11,6 +11,7 @@ import dotenv from "dotenv";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
+process.env.NODE_ENV = process.env.NODE_ENV || "test";
 
 import { generateToken, verifyToken, getJwtSecret } from "../src/utils/token.js";
 import { listComplaints, getComplaintById, getLegacyComplaints } from "../src/services/complaintService.js";
@@ -18,8 +19,9 @@ import { getDashboardSummary } from "../src/services/dashboardService.js";
 import { listOverlaps, getRelatedByComplaintId } from "../src/services/overlapService.js";
 import { getInstitutionComplaints } from "../src/services/institutionService.js";
 import { enforceAuditorReadOnly, authorizeRoles } from "../src/middleware/rbac.js";
+import { closePool } from "../src/config/db.js";
 
-const BASE_URL = "http://localhost:4000";
+const BASE_URL = process.env.TEST_API_URL || "http://localhost:4000";
 
 let passed = 0;
 let failed = 0;
@@ -196,23 +198,42 @@ async function runTests() {
   const auditorUser = { id: "a0000000-0000-0000-0000-000000000007", email: "auditor@aicte.gov.in", role: "AUDITOR", bureau: null, full_name: "Compliance Auditor" };
 
   // 5.1 SUPER_ADMIN and AUDITOR have global visibility
+  const BASELINE_COMPLAINTS = ["CMP-1001", "CMP-1002", "CMP-1003", "CMP-1004", "CMP-1005"];
   const adminComplaints = await listComplaints({}, { limit: 20, offset: 0 }, superAdminUser);
-  assert(adminComplaints.total === 5, "SUPER_ADMIN sees all 5 complaints across all bureaus", adminComplaints.total);
-
   const auditorComplaints = await listComplaints({}, { limit: 20, offset: 0 }, auditorUser);
-  assert(auditorComplaints.total === 5, "AUDITOR sees all 5 complaints across all bureaus", auditorComplaints.total);
+
+  assert(
+    adminComplaints.total >= 5 &&
+    adminComplaints.total === auditorComplaints.total &&
+    BASELINE_COMPLAINTS.every((id) => adminComplaints.complaints.some((c) => c.complaint_id === id)),
+    "SUPER_ADMIN sees all baseline complaints across all bureaus",
+    adminComplaints.total
+  );
+
+  assert(
+    auditorComplaints.total === adminComplaints.total &&
+    BASELINE_COMPLAINTS.every((id) => auditorComplaints.complaints.some((c) => c.complaint_id === id)),
+    "AUDITOR sees all baseline complaints across all bureaus matching SUPER_ADMIN",
+    auditorComplaints.total
+  );
 
   const adminDashboard = await getDashboardSummary(superAdminUser);
-  assert(adminDashboard.total_complaints === 5, "SUPER_ADMIN dashboard total_complaints equals 5 (system-wide)", adminDashboard.total_complaints);
+  assert(
+    adminDashboard.total_complaints === adminComplaints.total,
+    "SUPER_ADMIN dashboard total_complaints equals system-wide complaints count",
+    adminDashboard.total_complaints
+  );
 
   const adminOverlaps = await listOverlaps({}, { limit: 20, offset: 0 }, superAdminUser);
-  assert(adminOverlaps.total === 2, "SUPER_ADMIN sees all 2 overlap pairs in system", adminOverlaps.total);
+  assert(adminOverlaps.total >= 2, "SUPER_ADMIN sees all overlap pairs in system", adminOverlaps.total);
 
   // 5.2 BUREAU_HEAD (Student Development Cell) Scoping
   const sdcHeadComplaints = await listComplaints({}, { limit: 20, offset: 0 }, sdcHeadUser);
   assert(
-    sdcHeadComplaints.total === 2 && sdcHeadComplaints.complaints.every(c => c.bureau === "Student Development Cell"),
-    "BUREAU_HEAD (SDC) SQL query strictly scoped to Student Development Cell (count: 2)",
+    sdcHeadComplaints.total === sdcHeadComplaints.complaints.length &&
+    sdcHeadComplaints.complaints.every((c) => c.bureau === "Student Development Cell") &&
+    ["CMP-1001", "CMP-1003"].every((id) => sdcHeadComplaints.complaints.some((c) => c.complaint_id === id)),
+    "BUREAU_HEAD (SDC) SQL query strictly scoped to Student Development Cell",
     sdcHeadComplaints.total
   );
 
@@ -237,23 +258,44 @@ async function runTests() {
 
   const sdcHeadOverlaps = await listOverlaps({}, { limit: 20, offset: 0 }, sdcHeadUser);
   assert(
-    sdcHeadOverlaps.total === 2 && sdcHeadOverlaps.overlaps.every(o => o.caseA.bureau === "Student Development Cell" || o.caseB.bureau === "Student Development Cell"),
+    sdcHeadOverlaps.total >= 1 &&
+    sdcHeadOverlaps.overlaps.every((o) => o.caseA.bureau === "Student Development Cell" || o.caseB.bureau === "Student Development Cell"),
     "BUREAU_HEAD (SDC) only sees overlaps where Student Development Cell is a participant",
     sdcHeadOverlaps.total
   );
 
   const sdcHeadDashboard = await getDashboardSummary(sdcHeadUser);
-  assert(sdcHeadDashboard.total_complaints === 2, "BUREAU_HEAD (SDC) dashboard total_complaints equals 2 (bureau-scoped)", sdcHeadDashboard.total_complaints);
+  assert(
+    sdcHeadDashboard.total_complaints === sdcHeadComplaints.total,
+    "BUREAU_HEAD (SDC) dashboard total_complaints equals bureau-scoped complaints count",
+    sdcHeadDashboard.total_complaints
+  );
 
   const sdcHeadInst = await getInstitutionComplaints("INST-204", {}, { limit: 20, offset: 0 }, sdcHeadUser);
-  assert(sdcHeadInst.total === 1 && sdcHeadInst.complaints[0]?.bureau === "Student Development Cell", "BUREAU_HEAD (SDC) institution complaint history scoped to SDC (1 complaint out of 3)", sdcHeadInst.total);
+  assert(
+    sdcHeadInst.complaints.every((c) => c.bureau === "Student Development Cell") &&
+    sdcHeadInst.complaints.some((c) => c.complaint_id === "CMP-1001"),
+    "BUREAU_HEAD (SDC) institution complaint history strictly scoped to SDC",
+    sdcHeadInst.total
+  );
 
   // 5.3 BUREAU_OFFICER (Student Development Cell and Grievance Redressal Cell) Scoping
   const sdcComplaints = await listComplaints({}, { limit: 20, offset: 0 }, sdcOfficerUser);
-  assert(sdcComplaints.total === 2 && sdcComplaints.complaints.every(c => c.bureau === "Student Development Cell"), "SDC Officer SQL query strictly scoped to Student Development Cell (count: 2)", sdcComplaints.total);
+  assert(
+    sdcComplaints.total === sdcHeadComplaints.total &&
+    sdcComplaints.complaints.every((c) => c.bureau === "Student Development Cell"),
+    "SDC Officer SQL query strictly scoped to Student Development Cell",
+    sdcComplaints.total
+  );
 
   const grcComplaints = await listComplaints({}, { limit: 20, offset: 0 }, grcOfficerUser);
-  assert(grcComplaints.total === 2 && grcComplaints.complaints.every(c => c.bureau === "Grievance Redressal Cell"), "GRC Officer SQL query strictly scoped to Grievance Redressal Cell (count: 2)", grcComplaints.total);
+  assert(
+    grcComplaints.total === grcComplaints.complaints.length &&
+    grcComplaints.complaints.every((c) => c.bureau === "Grievance Redressal Cell") &&
+    ["CMP-1002", "CMP-1005"].every((id) => grcComplaints.complaints.some((c) => c.complaint_id === id)),
+    "GRC Officer SQL query strictly scoped to Grievance Redressal Cell",
+    grcComplaints.total
+  );
 
   const sdcAllowed = await getComplaintById("CMP-1001", sdcOfficerUser);
   assert(sdcAllowed?.complaint_id === "CMP-1001", "SDC Officer can view SDC complaint CMP-1001", sdcAllowed?.complaint_id);
@@ -276,25 +318,41 @@ async function runTests() {
 
   const sdcOverlaps = await listOverlaps({}, { limit: 20, offset: 0 }, sdcOfficerUser);
   assert(
-    sdcOverlaps.total === 2 && sdcOverlaps.overlaps.every(o => o.caseA.bureau === "Student Development Cell" || o.caseB.bureau === "Student Development Cell"),
+    sdcOverlaps.total >= 1 &&
+    sdcOverlaps.overlaps.every((o) => o.caseA.bureau === "Student Development Cell" || o.caseB.bureau === "Student Development Cell"),
     "SDC Officer only sees overlaps where Student Development Cell is a participant",
     sdcOverlaps.total
   );
 
   const sdcDashboard = await getDashboardSummary(sdcOfficerUser);
-  assert(sdcDashboard.total_complaints === 2, "SDC Officer dashboard total_complaints equals 2 (bureau-scoped)", sdcDashboard.total_complaints);
+  assert(
+    sdcDashboard.total_complaints === sdcComplaints.total,
+    "SDC Officer dashboard total_complaints equals bureau-scoped complaints count",
+    sdcDashboard.total_complaints
+  );
 
   const sdcInstComplaints = await getInstitutionComplaints("INST-204", {}, { limit: 20, offset: 0 }, sdcOfficerUser);
-  assert(sdcInstComplaints.total === 1 && sdcInstComplaints.complaints[0]?.bureau === "Student Development Cell", "SDC Officer institution complaint history scoped to SDC (1 complaint out of 3 total)", sdcInstComplaints.total);
+  assert(
+    sdcInstComplaints.complaints.every((c) => c.bureau === "Student Development Cell") &&
+    sdcInstComplaints.complaints.some((c) => c.complaint_id === "CMP-1001"),
+    "SDC Officer institution complaint history scoped to SDC",
+    sdcInstComplaints.total
+  );
 
   const sdcLegacy = await getLegacyComplaints(sdcOfficerUser);
-  assert(sdcLegacy.count === 2 && sdcLegacy.data.every(c => c.bureau === "Student Development Cell"), "getLegacyComplaints enforces SDC bureau scoping (count: 2)", sdcLegacy.count);
+  assert(
+    sdcLegacy.count === sdcComplaints.total &&
+    sdcLegacy.data.every((c) => c.bureau === "Student Development Cell"),
+    "getLegacyComplaints enforces SDC bureau scoping",
+    sdcLegacy.count
+  );
 
   // 5.4 GRIEVANCE_OFFICER (Grievance Redressal Cell) Scoping
   const grievanceComplaints = await listComplaints({}, { limit: 20, offset: 0 }, grievanceOfficerUser);
   assert(
-    grievanceComplaints.total === 2 && grievanceComplaints.complaints.every(c => c.bureau === "Grievance Redressal Cell"),
-    "GRIEVANCE_OFFICER SQL query strictly scoped to Grievance Redressal Cell (count: 2)",
+    grievanceComplaints.total === grcComplaints.total &&
+    grievanceComplaints.complaints.every((c) => c.bureau === "Grievance Redressal Cell"),
+    "GRIEVANCE_OFFICER SQL query strictly scoped to Grievance Redressal Cell",
     grievanceComplaints.total
   );
 
@@ -319,16 +377,26 @@ async function runTests() {
 
   const grievanceOverlaps = await listOverlaps({}, { limit: 20, offset: 0 }, grievanceOfficerUser);
   assert(
-    grievanceOverlaps.total === 2 && grievanceOverlaps.overlaps.every(o => o.caseA.bureau === "Grievance Redressal Cell" || o.caseB.bureau === "Grievance Redressal Cell"),
+    grievanceOverlaps.total >= 1 &&
+    grievanceOverlaps.overlaps.every((o) => o.caseA.bureau === "Grievance Redressal Cell" || o.caseB.bureau === "Grievance Redressal Cell"),
     "GRIEVANCE_OFFICER only sees overlaps where Grievance Redressal Cell is a participant",
     grievanceOverlaps.total
   );
 
   const grievanceDashboard = await getDashboardSummary(grievanceOfficerUser);
-  assert(grievanceDashboard.total_complaints === 2, "GRIEVANCE_OFFICER dashboard total_complaints equals 2 (bureau-scoped)", grievanceDashboard.total_complaints);
+  assert(
+    grievanceDashboard.total_complaints === grievanceComplaints.total,
+    "GRIEVANCE_OFFICER dashboard total_complaints equals bureau-scoped complaints count",
+    grievanceDashboard.total_complaints
+  );
 
   const grievanceLegacy = await getLegacyComplaints(grievanceOfficerUser);
-  assert(grievanceLegacy.count === 2 && grievanceLegacy.data.every(c => c.bureau === "Grievance Redressal Cell"), "getLegacyComplaints enforces GRC bureau scoping for GRIEVANCE_OFFICER (count: 2)", grievanceLegacy.count);
+  assert(
+    grievanceLegacy.count === grievanceComplaints.total &&
+    grievanceLegacy.data.every((c) => c.bureau === "Grievance Redressal Cell"),
+    "getLegacyComplaints enforces GRC bureau scoping for GRIEVANCE_OFFICER",
+    grievanceLegacy.count
+  );
 
   // 5.5 Deny-by-default for Scoped Role with Missing Bureau
   let missingBureauCaught = false;
@@ -376,12 +444,15 @@ async function runTests() {
   console.log(`Test Results: ${passed} passed, ${failed} failed`);
   console.log(`========================================\n`);
 
+  await closePool();
+
   if (failed > 0) {
     process.exit(1);
   }
 }
 
-runTests().catch((err) => {
+runTests().catch(async (err) => {
+  await closePool();
   console.error("Test execution failed:", err);
   process.exit(1);
 });

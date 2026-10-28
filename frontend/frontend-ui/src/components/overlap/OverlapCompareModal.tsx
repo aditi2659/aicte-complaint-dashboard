@@ -3,13 +3,13 @@ import { Modal } from '../common/Modal';
 import { OverlapMatch } from '../../types';
 import { useComplaints } from '../../context/ComplaintContext';
 import { StatusBadge, BureauBadge, PriorityBadge } from '../common/Badge';
-import { 
-  CheckCircle2, 
-  XCircle, 
-  ArrowRightLeft, 
-  Building2, 
-  User, 
-  Calendar, 
+import {
+  CheckCircle2,
+  XCircle,
+  ArrowRightLeft,
+  Building2,
+  User,
+  Calendar,
   ShieldAlert,
   Info
 } from 'lucide-react';
@@ -26,7 +26,7 @@ export const OverlapCompareModal: React.FC<OverlapCompareModalProps> = ({
   onClose,
 }) => {
   const { getComplaintById, reviewOverlap, isOverdue } = useComplaints();
-  
+
   const complaintA = getComplaintById(overlap.complaintAId);
   const complaintB = getComplaintById(overlap.complaintBId);
 
@@ -35,16 +35,35 @@ export const OverlapCompareModal: React.FC<OverlapCompareModalProps> = ({
     overlap.relationshipType || 'FACULTY_STUDENT_CONCURRENT'
   );
 
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+
   if (!complaintA || !complaintB) return null;
 
-  const handleConfirm = () => {
-    reviewOverlap(overlap.id, 'CONFIRMED_RELATED', reviewNotes || 'Confirmed related case nexus across bureaus.', relationshipType);
-    onClose();
+  const handleConfirm = async () => {
+    setIsSubmitting(true);
+    setReviewError(null);
+    try {
+      await reviewOverlap(overlap.id, 'CONFIRMED_RELATED', reviewNotes || 'Confirmed related case nexus across bureaus.', relationshipType);
+      onClose();
+    } catch (err: any) {
+      setReviewError(err.message || 'Failed to confirm overlap on backend.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleDismiss = () => {
-    reviewOverlap(overlap.id, 'DISMISSED', reviewNotes || 'Dismissed upon administrative inspection - unrelated matter.', relationshipType);
-    onClose();
+  const handleDismiss = async () => {
+    setIsSubmitting(true);
+    setReviewError(null);
+    try {
+      await reviewOverlap(overlap.id, 'DISMISSED', reviewNotes || 'Dismissed upon administrative inspection - unrelated matter.', relationshipType);
+      onClose();
+    } catch (err: any) {
+      setReviewError(err.message || 'Failed to dismiss overlap on backend.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const sameInstitution = complaintA.aictePermanentId === complaintB.aictePermanentId;
@@ -268,6 +287,19 @@ export const OverlapCompareModal: React.FC<OverlapCompareModalProps> = ({
             </div>
           </div>
 
+          {reviewError && (
+            <div className="bg-[#2D1B1F] border border-[#FF8BCB] px-3 py-2 text-xs font-mono text-[#FF8BCB] flex items-center justify-between">
+              <span>⚠️ Review Action Error: {reviewError}</span>
+              <button
+                type="button"
+                onClick={() => setReviewError(null)}
+                className="text-[#A6B7A8] hover:text-[#E6EFE5] text-xs font-mono underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
           {/* Action Buttons */}
           <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[#35473A]">
             <div className="text-[10px] text-[#A6B7A8] flex items-center gap-1">
@@ -278,19 +310,21 @@ export const OverlapCompareModal: React.FC<OverlapCompareModalProps> = ({
               <button
                 type="button"
                 onClick={handleDismiss}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 border border-[#35473A] bg-[#1A241D] hover:bg-[#202D24] text-[#A6B7A8] hover:text-[#E6EFE5] text-xs font-semibold font-mono transition-colors"
+                disabled={isSubmitting}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 border border-[#35473A] bg-[#1A241D] hover:bg-[#202D24] text-[#A6B7A8] hover:text-[#E6EFE5] text-xs font-semibold font-mono transition-colors disabled:opacity-50"
               >
                 <XCircle size={14} className="text-[#A6B7A8]" />
-                <span>Dismiss Match</span>
+                <span>{isSubmitting ? 'Processing...' : 'Dismiss Match'}</span>
               </button>
 
               <button
                 type="button"
                 onClick={handleConfirm}
-                className="flex items-center gap-1.5 px-4 py-1.5 bg-[#FF8BCB] hover:bg-[#F278BA] text-[#101713] text-xs font-bold font-mono transition-colors shadow-xs"
+                disabled={isSubmitting}
+                className="flex items-center gap-1.5 px-4 py-1.5 bg-[#FF8BCB] hover:bg-[#F278BA] text-[#101713] text-xs font-bold font-mono transition-colors shadow-xs disabled:opacity-50"
               >
                 <CheckCircle2 size={14} />
-                <span>Confirm Related & Link Files</span>
+                <span>{isSubmitting ? 'Connecting...' : 'Confirm Related & Link Files'}</span>
               </button>
             </div>
           </div>

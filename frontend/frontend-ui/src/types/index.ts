@@ -181,3 +181,78 @@ export interface SystemUser {
   permissions: string[];
   lastLogin: string;
 }
+
+// Backend Analytics Contracts (/api/v1/analytics/*)
+
+export interface AnalyticsRiskScore {
+  score: number;
+  level: 'Low' | 'Medium' | 'High' | 'Closed' | string;
+  reasons: string[];
+}
+
+export interface AnalyticsRiskCase {
+  complaint_id: string;
+  institution_id: string;
+  region: string;
+  category: string;
+  created_at: string;
+  due_date: string | null;
+  last_action_date: string | null;
+  status: string;
+  bureau: string;
+  transfer_count: number;
+  is_escalated: boolean;
+  has_overlap: boolean;
+  risk: AnalyticsRiskScore;
+}
+
+export interface AnalyticsPriorityCase {
+  complaint_id: string;
+  institution_id: string;
+  bureau: string;
+  status: string;
+  is_escalated: boolean;
+  days_left: number | null;
+  score: number;
+  level: string;
+  reasons: string[];
+}
+
+export interface RepeatedCategoryPattern {
+  institution_id: string;
+  category: string;
+  region: string;
+  count: number;
+  complaint_ids: string[];
+  message: string;
+}
+
+export interface RisingCategoryPattern {
+  category: string;
+  recent: number;
+  previous: number;
+  message: string;
+}
+
+export interface BusyRegionPattern {
+  region: string;
+  count: number;
+  message: string;
+}
+
+export interface AnalyticsPatterns {
+  repeatedCategories: RepeatedCategoryPattern[];
+  risingCategories: RisingCategoryPattern[];
+  busyRegions: BusyRegionPattern[];
+}
+
+export interface AnalyticsAlert {
+  complaint_id: string;
+  institution_id: string;
+  bureau: string;
+  created_at: string;
+  seen: boolean;
+  type: 'deadline_crossed' | 'deadline_approaching' | 'pending_reminder' | 'escalation' | string;
+  severity: 'High' | 'Medium' | 'Low' | 'Critical' | string;
+  message: string;
+}

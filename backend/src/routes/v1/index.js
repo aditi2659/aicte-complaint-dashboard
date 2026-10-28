@@ -4,6 +4,8 @@ import institutionRoutes from "./institutionRoutes.js";
 import complaintRoutes from "./complaintRoutes.js";
 import dashboardRoutes from "./dashboardRoutes.js";
 import overlapRoutes from "./overlapRoutes.js";
+import analyticsRoutes from "./analyticsRoutes.js";
+import auditRoutes from "./auditRoutes.js";
 import { authenticate } from "../../middleware/auth.js";
 import { enforceAuditorReadOnly } from "../../middleware/rbac.js";
 
@@ -17,5 +19,7 @@ router.use("/institutions", authenticate, enforceAuditorReadOnly, institutionRou
 router.use("/complaints", authenticate, enforceAuditorReadOnly, complaintRoutes);
 router.use("/dashboard", authenticate, enforceAuditorReadOnly, dashboardRoutes);
 router.use("/overlaps", authenticate, enforceAuditorReadOnly, overlapRoutes);
+router.use("/analytics", authenticate, enforceAuditorReadOnly, analyticsRoutes);
+router.use("/audit-logs", authenticate, enforceAuditorReadOnly, auditRoutes);
 
 export default router;
