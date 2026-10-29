@@ -28,9 +28,33 @@ try {
 
 const app = express();
 const port = process.env.PORT || 4000;
-const frontendOrigin = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+const host = "0.0.0.0";
+const configuredOrigin = process.env.FRONTEND_ORIGIN?.trim();
 
-app.use(cors({ origin: frontendOrigin }));
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (e.g. mobile apps, curl, or same-origin server requests)
+      if (!origin) return callback(null, true);
+      if (configuredOrigin && (origin === configuredOrigin || configuredOrigin === "*")) {
+        return callback(null, true);
+      }
+      if (
+        origin.includes("localhost") ||
+        origin.includes("127.0.0.1") ||
+        origin.endsWith(".onrender.com") ||
+        origin.endsWith(".vercel.app")
+      ) {
+        return callback(null, true);
+      }
+      if (!configuredOrigin) {
+        return callback(null, true);
+      }
+      return callback(new Error("CORS origin not allowed"), false);
+    },
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 // Public health probes
@@ -80,8 +104,14 @@ app.get("/api/complaints/related", authenticate, async (req, res, next) => {
 app.use("/api/v1", v1Router);
 
 // Serve production frontend assets if available
-const frontendDist = path.resolve(__dirname, "../../frontend/frontend-ui/dist");
-if (fs.existsSync(frontendDist)) {
+const candidateDistPaths = [
+  path.resolve(__dirname, "../../frontend/frontend-ui/dist"),
+  path.resolve(process.cwd(), "../frontend/frontend-ui/dist"),
+  path.resolve(process.cwd(), "frontend/frontend-ui/dist"),
+  path.resolve(process.cwd(), "dist")
+];
+const frontendDist = candidateDistPaths.find((p) => fs.existsSync(p));
+if (frontendDist) {
   app.use(express.static(frontendDist));
   app.get("*", (req, res, next) => {
     if (req.path.startsWith("/api")) {
@@ -97,8 +127,8 @@ app.use(notFoundHandler);
 // Centralized error handler
 app.use(errorHandler);
 
-const server = app.listen(port, () => {
-  console.log(`API listening on http://localhost:${port}`);
+const server = app.listen(port, host, () => {
+  console.log(`API listening on http://${host}:${port}`);
 });
 
 export { app, server };

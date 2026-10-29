@@ -3,7 +3,8 @@
  * Handles real authentication against the Express backend.
  */
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL as string) || 'http://localhost:4000/api';
+const rawBase = (import.meta.env.VITE_API_BASE_URL as string)?.trim()?.replace(/\/+$/, '');
+const API_BASE = rawBase ? (rawBase.endsWith('/api') ? rawBase : `${rawBase}/api`) : '/api';
 const TOKEN_KEY = 'aicte_auth_token';
 const USER_KEY = 'aicte_auth_user';
 
