@@ -16,13 +16,60 @@ import {
   Activity,
   Clock3,
   Fingerprint,
+  UserPlus,
+  Copy,
+  Check,
+  X
 } from 'lucide-react';
+import { adminCreateUser, adminGenerateSetupToken } from '../services/authApi';
 
 export const AdminPage: React.FC = () => {
   const { auditLogs, currentUser } = useComplaints();
   const [activeTab, setActiveTab] = useState<
     'audit' | 'roles' | 'integrations'
   >('audit');
+  const [tokenModal, setTokenModal] = useState<{ email: string; token: string; expiresAt: string } | null>(null);
+  const [provisionModal, setProvisionModal] = useState(false);
+  const [provForm, setProvForm] = useState({ email: '', fullName: '', role: 'BUREAU_OFFICER', bureau: 'Student Development Cell' });
+  const [provLoading, setProvLoading] = useState(false);
+  const [provError, setProvError] = useState('');
+  const [tokenLoading, setTokenLoading] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const handleGenerateToken = async (email: string) => {
+    setTokenLoading(email);
+    try {
+      const res = await adminGenerateSetupToken(email);
+      setTokenModal({ email: res.email, token: res.setupToken, expiresAt: res.expiresAt });
+      setCopied(false);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to generate token');
+    } finally {
+      setTokenLoading(null);
+    }
+  };
+
+  const handleProvisionSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProvLoading(true);
+    setProvError('');
+    try {
+      const res = await adminCreateUser({
+        email: provForm.email,
+        fullName: provForm.fullName,
+        role: provForm.role,
+        bureau: provForm.bureau
+      });
+      setProvisionModal(false);
+      setTokenModal({ email: res.user.email, token: res.setupToken, expiresAt: res.expiresAt });
+      setCopied(false);
+      setProvForm({ email: '', fullName: '', role: 'BUREAU_OFFICER', bureau: 'Student Development Cell' });
+    } catch (err: unknown) {
+      setProvError(err instanceof Error ? err.message : 'Failed to provision official');
+    } finally {
+      setProvLoading(false);
+    }
+  };
 
   const tabs = [
     { id: 'audit' as const, label: 'Audit Trail', icon: History },
@@ -230,18 +277,29 @@ export const AdminPage: React.FC = () => {
       {/* Role matrix */}
       {activeTab === 'roles' && (
         <section className="overflow-hidden rounded-lg border border-[#35473A] bg-[#111713]">
-          <div className="flex items-center gap-3 border-b border-[#35473A] px-5 py-5">
-            <div className="flex h-10 w-10 items-center justify-center rounded-md border border-[#C4F279]/20 bg-[#C4F279]/[0.07]">
-              <Users size={19} className="text-[#C4F279]" />
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#35473A] px-5 py-5">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-md border border-[#C4F279]/20 bg-[#C4F279]/[0.07]">
+                <Users size={19} className="text-[#C4F279]" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold">
+                  Role-Based Access Control & User Provisioning
+                </h3>
+                <p className="mt-1 text-[11px] text-[#A6B7A8]">
+                  Configured official profiles, permission allocations, and activation credentials.
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="text-sm font-bold">
-                Role-Based Access Control
-              </h3>
-              <p className="mt-1 text-[11px] text-[#A6B7A8]">
-                Configured officer profiles and permission allocations.
-              </p>
-            </div>
+
+            <button
+              type="button"
+              onClick={() => setProvisionModal(true)}
+              className="inline-flex items-center gap-2 rounded-md border border-[#C4F279]/40 bg-[#C4F279]/10 px-3.5 py-2 text-xs font-semibold text-[#C4F279] transition hover:bg-[#C4F279]/20"
+            >
+              <UserPlus size={15} />
+              <span>Invite Authorized Official</span>
+            </button>
           </div>
 
           <div className="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
@@ -283,6 +341,18 @@ export const AdminPage: React.FC = () => {
                       </span>
                     ))}
                   </div>
+                </div>
+
+                <div className="mt-4 border-t border-[#35473A]/70 pt-3 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => handleGenerateToken(u.email)}
+                    disabled={tokenLoading === u.email}
+                    className="inline-flex items-center gap-1.5 rounded border border-[#536D3B]/70 bg-[#101612] px-3 py-1.5 text-[11px] font-medium text-[#C4F279] transition hover:bg-[#1C281E] disabled:opacity-50"
+                  >
+                    <KeyRound size={13} />
+                    <span>{tokenLoading === u.email ? 'Generating...' : 'Generate Activation Token'}</span>
+                  </button>
                 </div>
               </article>
             ))}
@@ -371,6 +441,185 @@ export const AdminPage: React.FC = () => {
             ))}
           </div>
         </section>
+      )}
+
+      {/* Token Display Modal */}
+      {tokenModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-lg border border-[#536D3B] bg-[#111713] p-6 shadow-2xl">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-[#C4F279]">
+                <KeyRound size={16} />
+                Activation Token Generated
+              </div>
+              <button
+                type="button"
+                onClick={() => setTokenModal(null)}
+                className="text-[#888] hover:text-[#FFF]"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-[#8B9A8D]">Target Official</p>
+                <p className="font-mono text-xs text-[#E6EFE5]">{tokenModal.email}</p>
+              </div>
+
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-[#8B9A8D]">One-Time Activation Token</p>
+                <div className="mt-1 flex items-center gap-2 rounded border border-[#35473A] bg-[#0A0E0B] p-2.5">
+                  <input
+                    type="text"
+                    readOnly
+                    value={tokenModal.token}
+                    className="w-full bg-transparent font-mono text-xs text-[#C4F279] focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(tokenModal.token);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }}
+                    className="shrink-0 rounded border border-[#536D3B]/70 bg-[#1E2B20] px-2.5 py-1 text-[11px] font-semibold text-[#C4F279] hover:bg-[#283B2B]"
+                  >
+                    {copied ? <Check size={14} /> : <Copy size={14} />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-[#8B9A8D]">Token Expiration</p>
+                <p className="font-mono text-[11px] text-[#A6B7A8]">{new Date(tokenModal.expiresAt).toLocaleString()}</p>
+              </div>
+
+              <p className="rounded border border-[#536D3B]/40 bg-[#182119] p-3 text-[11px] leading-relaxed text-[#A6B7A8]">
+                Provide this activation token to the official. They can enter it under <strong>SET PASSWORD</strong> on the portal login page to establish their personal credentials.
+              </p>
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setTokenModal(null)}
+                className="rounded bg-[#C4F279] px-4 py-2 text-xs font-semibold text-black hover:bg-[#D5FFA0]"
+              >
+                Close &amp; Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Provision Official Modal */}
+      {provisionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-lg border border-[#536D3B] bg-[#111713] p-6 shadow-2xl">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-[#C4F279]">
+                <UserPlus size={16} />
+                Invite Authorized Official
+              </div>
+              <button
+                type="button"
+                onClick={() => setProvisionModal(false)}
+                className="text-[#888] hover:text-[#FFF]"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleProvisionSubmit} className="mt-5 space-y-4">
+              {provError && (
+                <div className="rounded border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-300">
+                  {provError}
+                </div>
+              )}
+
+              <div>
+                <label className="text-[10px] font-mono uppercase tracking-wider text-[#A6B7A8]">
+                  Full Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Dr. Rajesh Sharma"
+                  value={provForm.fullName}
+                  onChange={(e) => setProvForm({ ...provForm, fullName: e.target.value })}
+                  className="mt-1 w-full rounded border border-[#35473A] bg-[#182119] px-3 py-2 text-xs text-[#E6EFE5] placeholder-[#666] focus:border-[#C4F279] focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-mono uppercase tracking-wider text-[#A6B7A8]">
+                  Official Email Address
+                </label>
+                <input
+                  type="email"
+                  required
+                  placeholder="e.g. r.sharma@aicte.gov.in"
+                  value={provForm.email}
+                  onChange={(e) => setProvForm({ ...provForm, email: e.target.value })}
+                  className="mt-1 w-full rounded border border-[#35473A] bg-[#182119] px-3 py-2 text-xs text-[#E6EFE5] placeholder-[#666] focus:border-[#C4F279] focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-mono uppercase tracking-wider text-[#A6B7A8]">
+                    Role
+                  </label>
+                  <select
+                    value={provForm.role}
+                    onChange={(e) => setProvForm({ ...provForm, role: e.target.value })}
+                    className="mt-1 w-full rounded border border-[#35473A] bg-[#182119] px-3 py-2 text-xs text-[#E6EFE5] focus:border-[#C4F279] focus:outline-none"
+                  >
+                    <option value="BUREAU_OFFICER">BUREAU_OFFICER</option>
+                    <option value="BUREAU_HEAD">BUREAU_HEAD</option>
+                    <option value="GRIEVANCE_OFFICER">GRIEVANCE_OFFICER</option>
+                    <option value="AUDITOR">AUDITOR</option>
+                    <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-mono uppercase tracking-wider text-[#A6B7A8]">
+                    Bureau Assignment
+                  </label>
+                  <select
+                    value={provForm.bureau}
+                    onChange={(e) => setProvForm({ ...provForm, bureau: e.target.value })}
+                    className="mt-1 w-full rounded border border-[#35473A] bg-[#182119] px-3 py-2 text-xs text-[#E6EFE5] focus:border-[#C4F279] focus:outline-none"
+                  >
+                    <option value="Student Development Cell">Student Development Cell</option>
+                    <option value="Grievance Redressal Cell">Grievance Redressal Cell</option>
+                    <option value="Quality Assurance Cell">Quality Assurance Cell</option>
+                    <option value="">None (Auditor / Central Admin)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-6 flex justify-end gap-2 border-t border-[#35473A] pt-4">
+                <button
+                  type="button"
+                  onClick={() => setProvisionModal(false)}
+                  className="rounded border border-[#35473A] px-4 py-2 text-xs text-[#A6B7A8] hover:bg-[#182119]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={provLoading}
+                  className="rounded bg-[#C4F279] px-4 py-2 text-xs font-semibold text-black hover:bg-[#D5FFA0] disabled:opacity-50"
+                >
+                  {provLoading ? 'Provisioning...' : 'Provision & Generate Token'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

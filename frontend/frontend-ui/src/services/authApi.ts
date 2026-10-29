@@ -123,6 +123,61 @@ export async function login(email: string, password: string): Promise<AuthUser> 
   throw new Error('Invalid response format received from authentication server.');
 }
 
+export async function setupPassword(email: string, token: string, newPassword: string): Promise<AuthUser> {
+  const payload = await request<{ success: boolean; data: { token: string; user: AuthUser } }>(
+    '/v1/auth/setup-password',
+    {
+      method: 'POST',
+      body: JSON.stringify({ email, token, newPassword })
+    }
+  );
+  if (payload?.success && payload?.data?.token) {
+    storeSession(payload.data.token, payload.data.user);
+    return payload.data.user;
+  }
+  throw new Error('Invalid response received from password setup endpoint.');
+}
+
+export async function requestSetupToken(email: string): Promise<{ message: string; setupToken?: string }> {
+  const payload = await request<{ success: boolean; data: { message: string; setupToken?: string } }>(
+    '/v1/auth/request-setup',
+    {
+      method: 'POST',
+      body: JSON.stringify({ email })
+    }
+  );
+  return payload.data;
+}
+
+export async function adminCreateUser(params: {
+  email: string;
+  fullName: string;
+  role: string;
+  bureau?: string;
+}): Promise<{ user: AuthUser; setupToken: string; expiresAt: string }> {
+  const payload = await request<{
+    success: boolean;
+    data: { user: AuthUser; setupToken: string; expiresAt: string };
+  }>('/v1/auth/admin/users', {
+    method: 'POST',
+    body: JSON.stringify(params)
+  });
+  return payload.data;
+}
+
+export async function adminGenerateSetupToken(
+  email: string
+): Promise<{ email: string; fullName: string; role: string; setupToken: string; expiresAt: string }> {
+  const payload = await request<{
+    success: boolean;
+    data: { email: string; fullName: string; role: string; setupToken: string; expiresAt: string };
+  }>('/v1/auth/admin/generate-setup-token', {
+    method: 'POST',
+    body: JSON.stringify({ email })
+  });
+  return payload.data;
+}
+
 export async function getCurrentUser(): Promise<AuthUser | null> {
   const payload = await request<{ success: boolean; data: AuthUser }>('/v1/auth/me');
   if (payload?.success && payload?.data) {
@@ -134,3 +189,4 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
 export async function checkHealth(): Promise<{ message: string }> {
   return request<{ message: string }>('/health');
 }
+

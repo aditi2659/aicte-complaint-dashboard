@@ -28,7 +28,8 @@ async function verifySchema(client) {
     "complaints",
     "complaint_links",
     "complaint_transfers",
-    "complaint_actions"
+    "complaint_actions",
+    "user_setup_tokens"
   ];
 
   const tableRes = await client.query(

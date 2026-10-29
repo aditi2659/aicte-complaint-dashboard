@@ -124,6 +124,16 @@ export async function setupTestDatabase() {
     // Reset transfers
     await client.query(`DELETE FROM complaint_transfers;`);
 
+    // Reset user setup tokens and clean non-baseline test accounts
+    await client.query(`DELETE FROM user_setup_tokens;`);
+    await client.query(`
+      DELETE FROM users WHERE email NOT IN (
+        'admin@aicte.gov.in', 'sdc.head@aicte.gov.in', 'sdc.officer@aicte.gov.in',
+        'grc.officer@aicte.gov.in', 'grievance.officer@aicte.gov.in',
+        'qac.officer@aicte.gov.in', 'auditor@aicte.gov.in'
+      );
+    `);
+
     console.log("[PASS] Baseline overlap and complaint starting states established.");
   } finally {
     client.release();
